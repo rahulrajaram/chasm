@@ -1,0 +1,62 @@
+# chasm site descriptor.
+#
+# This is the single source of truth for host wiring that used to be hardcoded
+# across the control plane. The installer copies it to
+# /etc/chasm/site.conf (root:root 0644; it holds no secrets).
+#
+# Format: flat POSIX key=value, one key per line, no quoting, no expansions.
+# Every key below must be present unless its comment says "optional"
+# (operator_user must be present, but its value may be empty). Unknown keys
+# are fatal, malformed values are fatal, and sandbox_ipv4_prefix must be the
+# network prefix implied by bridge_ipv4.
+#
+# A fresh Debian host needs zero edits: these values are the supported default
+# site. The installer copies this file to /etc/chasm/site.conf and
+# writes the resolved site_name and operator_user into it (headless services
+# cannot resolve empty-key defaults); every other value ships as-is.
+
+# identity
+site_name=                       # optional; defaults to the host's hostname
+
+# network (cross-layer contract: the bridge, the firewall, and guest addressing
+# all derive from these three keys)
+bridge_name=chasmbr0
+bridge_ipv4=10.77.0.1/24
+sandbox_ipv4_prefix=10.77.0.    # allocation range .2-.254
+
+# storage / incus
+storage_pool=chasm
+pool_size_gib=64
+profile_name=chasm
+# Optional fresh-profile root disk size (GiB), from 1 to 4096.
+# profile_root_disk_gib=60
+base_image_alias=chasm-debian-13
+base_image_remote=images:debian/13/cloud
+
+# Incus resource naming: every Incus object this site owns — the instance
+# metadata keys user.<prefix>.*, the shared and per-sandbox storage volumes
+# (<prefix>-shared, <prefix>-workspace-<instance>), and the sealed template
+# instances (<prefix>-template-<profile>-<identity>) — is named from this
+# prefix. Optional; absent or empty defaults to chasm. Leave it as chasm
+# unless you are adopting an existing installation's Incus objects (for
+# example ones named agent-sandbox-*); changing it on a provisioned site
+# orphans the objects created under the old prefix.
+resource_prefix=chasm
+
+# users
+operator_user=                   # value optional (key required); empty defaults to the provisioning user
+guest_uid=1001                   # in-guest agent uid/gid
+supervisor_user=chasm-supervisor
+
+# admission
+host_reserve_mib=1024            # host memory the admission gate never allocates (0..1048576 MiB)
+
+# CLI default: the sandbox `chasm shell`, `start`, `stop`, `status`, and
+# `show` address when NAME is omitted. `pause`, `resume`, and `delete`
+# always require an explicit NAME. Optional; absent or empty means NAME is
+# required.
+default_sandbox=
+
+# bootstrap profile: the sealed template layer set sandboxes launch from.
+# Optional; absent or empty means the default `minimal`.
+bootstrap_profile=minimal

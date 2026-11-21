@@ -1,0 +1,13 @@
+[Unit]
+Description=chasm privileged executor socket
+ConditionPathExists=@SITE_MARKER_PATH@
+
+[Socket]
+ListenStream=/run/chasm-executor.sock
+SocketUser=root
+SocketGroup=@SUPERVISOR_USER@
+SocketMode=0660
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

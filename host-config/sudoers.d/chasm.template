@@ -1,0 +1,6 @@
+# Permit the root-owned interactive entry helper to receive one sandbox name.
+# The helper independently enforces one safe name, the site identity, and the
+# guest uid/gid from the site descriptor inside the derived managed instance.
+# Render with @OPERATOR_USER@ replaced by the site's operator_user before
+# installing this file under /etc/sudoers.d/.
+@OPERATOR_USER@ ALL=(root) NOPASSWD: /usr/local/bin/chasm __shell *

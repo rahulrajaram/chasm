@@ -1,0 +1,111 @@
+{
+ "cpu": {
+  "declared": {
+   "count": 14,
+   "source": "the sandbox's CPU budget key"
+  },
+  "drift": false,
+  "enforced": {
+   "count": 14,
+   "source": "expanded limits.cpu"
+  },
+  "host_count": {
+   "count": 20,
+   "source": "the host's CPU count"
+  }
+ },
+ "host": {
+  "admitted_mib": 49152,
+  "host_reserve_mib": 1024,
+  "mem_available_mib": 20000,
+  "mem_total_mib": 63920,
+  "observed_own_mib": 19036,
+  "resident_sum_mib": 24884,
+  "unresolved_peers": 0,
+  "warning": true,
+  "warnings": [
+   "the host is using 19036 MiB for itself but host_reserve_mib is 1024; admitted budgets may not fit; raise host_reserve_mib in site.conf and rerun provision"
+  ]
+ },
+ "memory": {
+  "declared": {
+   "mib": 20480,
+   "source": "the sandbox's budget key"
+  },
+  "drift": true,
+  "enforced": {
+   "mib": 49152,
+   "source": "expanded limits.memory"
+  },
+  "guest_total": {
+   "mib": 48128,
+   "source": "instance state memory.total as reported by the guest agent"
+  },
+  "guest_used": {
+   "mib": 3104,
+   "source": "instance state memory.usage as reported by the guest agent"
+  },
+  "host_cap": {
+   "mib": 62896,
+   "source": "MemTotal MiB - host_reserve_mib 1024 MiB"
+  },
+  "host_resident": {
+   "mib": 24884,
+   "source": "VmRSS of the instance process"
+  }
+ },
+ "pool": {
+  "loop": {
+   "allocated_mib": 272384,
+   "apparent_mib": 921600,
+   "backing_free_mib": 20000,
+   "file": "/var/lib/incus/disks/chasm-test.img",
+   "source": "the loop file's size, its allocated blocks, and the free space of the filesystem that holds it"
+  },
+  "name": "chasm-test",
+  "size": {
+   "mib": 921600,
+   "source": "storage pool config.size"
+  },
+  "used": {
+   "mib": 279552,
+   "source": "storage pool resources space.used"
+  },
+  "warnings": [
+   "the pool's configured size 921600 MiB exceeds its loop file's 272384 MiB allocated plus 20000 MiB free behind it; the pool could not be filled; free at least 629216 MiB more on the filesystem holding /var/lib/incus/disks/chasm-test.img"
+  ]
+ },
+ "root_disk": {
+  "origin": "override",
+  "pool_used": {
+   "mib": 3175,
+   "source": "instance state disk.root.usage (the storage pool's usage of the root volume)"
+  },
+  "size": {
+   "mib": 153600,
+   "source": "expanded root device size, an instance override"
+  }
+ },
+ "workspace": {
+  "pool": {
+   "name": "chasm-test",
+   "size": {
+    "mib": 921600,
+    "source": "storage pool config.size"
+   },
+   "used": {
+    "mib": 279552,
+    "source": "storage pool resources space.used"
+   }
+  },
+  "quota": {
+   "mib": 223240,
+   "source": "workspace volume state usage.total"
+  },
+  "used": {
+   "mib": 223240,
+   "source": "workspace volume state usage.used"
+  },
+  "volume": "chasm-workspace-sandbox-development"
+ }
+}

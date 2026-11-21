@@ -1,0 +1,5 @@
+d /var/lib/chasm 0755 root root -
+d /var/lib/chasm/executor 0700 root root -
+d /var/lib/chasm/executor/catalog 0700 @SUPERVISOR_USER@ @SUPERVISOR_USER@ -
+d /var/lib/chasm/supervisor 0700 @SUPERVISOR_USER@ @SUPERVISOR_USER@ -
+d /var/lib/chasm/launches 0700 root root -

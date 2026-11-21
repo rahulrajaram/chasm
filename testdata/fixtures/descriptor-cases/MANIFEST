@@ -1,0 +1,76 @@
+# Descriptor parity corpus: one case per line, '<file> <expect> <hint>'.
+# <expect> is accept or reject; <hint> is a word the rejecting reader's
+# message must name (accept cases carry '-' as a placeholder).
+# Recorded verdicts are the Go reader's; the shell reader must agree.
+unknown-key                  reject extra_key
+legacy-receipts-remote       reject legacy_receipts_remote
+repeated-key                 reject repeated
+quoted-value                 reject plain token
+operator-uppercase           reject operator_user
+operator-semicolon           reject operator_user
+operator-dot                 reject operator_user
+guest-uid-text               reject guest_uid
+guest-uid-zero               reject guest_uid
+guest-uid-negative           reject guest_uid
+guest-uid-leading-zero       reject guest_uid
+guest-uid-plus               reject guest_uid
+reserve-text                 reject host_reserve_mib
+reserve-negative             reject host_reserve_mib
+reserve-leading-zero         reject host_reserve_mib
+reserve-plus                 reject host_reserve_mib
+reserve-int64-overflow       reject host_reserve_mib
+reserve-int64max             reject permitted range
+reserve-over-max             reject permitted range
+pool-zero                    reject pool_size_gib
+pool-text                    reject pool_size_gib
+sandbox-unsafe               reject default_sandbox
+sandbox-leading-hyphen       reject default_sandbox
+remote-no-colon              reject base_image_remote
+remote-empty-remote          reject base_image_remote
+site-name-space              reject plain token
+site-name-dollar             reject plain token
+value-backslash              reject plain token
+bridge-not-cidr              reject bridge_ipv4
+bridge-wrong-mask            reject bridge_ipv4
+bridge-bad-octet             reject bridge_ipv4
+bridge-leading-zero          reject bridge_ipv4
+bridge-ipv6-addr             reject bridge_ipv4
+bridge-extra-slash           reject bridge_ipv4
+prefix-mismatch              reject derivable
+valid-base                   accept -
+valid-bridge-host-bits       accept -
+valid-bridge-numeric         accept -
+valid-comment-trailing       accept -
+valid-empty-default-sandbox  accept -
+valid-equals-value           accept -
+valid-operator-underscore    accept -
+valid-optionals              accept -
+valid-remote-trailing-colon  accept -
+valid-reserve-max            accept -
+valid-sandbox-single         accept -
+valid-site-name-upper        accept -
+valid-supervisor-dash        accept -
+valid-trim                   accept -
+valid-bootstrap-profile        accept -
+bootstrap-profile-empty        accept -
+bootstrap-profile-unsafe       reject bootstrap_profile
+bootstrap-profile-bool         reject bootstrap_profile
+bootstrap-profile-too-long     reject bootstrap_profile
+pool-size-over-max          reject pool_size_gib
+pool-size-int64-wrap        reject pool_size_gib
+resource-prefix-custom         accept -
+resource-prefix-empty          accept -
+resource-prefix-uppercase      reject resource_prefix
+resource-prefix-underscore     reject resource_prefix
+resource-prefix-leading-digit  reject resource_prefix
+resource-prefix-leading-hyphen reject resource_prefix
+resource-prefix-double-dash    reject resource_prefix
+resource-prefix-too-long       reject resource_prefix
+bridge-gateway-0 reject reserved host address
+bridge-gateway-2 accept -
+bridge-gateway-10 reject reserved host address
+bridge-gateway-11 reject reserved host address
+bridge-gateway-255 reject reserved host address
+root-disk-ok accept -
+root-disk-oversized reject profile_root_disk_gib
+root-disk-zero reject profile_root_disk_gib

@@ -1,0 +1,39 @@
+config:
+  images.auto_update_interval: "0"
+networks:
+  - name: @BRIDGE_NAME@
+    description: Isolated NAT bridge for chasm VMs
+    type: bridge
+    config:
+      ipv4.address: @BRIDGE_IPV4@
+      ipv4.nat: "true"
+      ipv6.address: none
+storage_pools:
+  - name: @STORAGE_POOL@
+    description: Bounded loop-backed storage for the private sandbox
+    driver: btrfs
+    config:
+      source: @POOL_SOURCE@
+      size: @POOL_SIZE@
+profiles:
+  - name: default
+    description: Empty default profile; sandbox instances use explicit profiles
+    config: {}
+    devices: {}
+  - name: @PROFILE_NAME@
+    description: Resource-bounded full-VM sandbox profile
+    config:
+      limits.cpu: "2"
+      limits.memory: 3GiB
+      security.secureboot: "true"
+    devices:
+      eth0:
+        type: nic
+        name: eth0
+        network: @BRIDGE_NAME@
+        ipv4.address: @PROFILE_ETH0_IPV4@
+      root:
+        type: disk
+        path: /
+        pool: @PROFILE_ROOT_POOL@
+        size: @PROFILE_ROOT_DISK_SIZE@

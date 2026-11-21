@@ -1,0 +1,19 @@
+# Site bootstrap-profile corpus: one case per line, '<file> <expect> <hint>'.
+# <expect> is accept or reject; <hint> is a word the rejecting reader's
+# message must name (accept cases carry '-' as a placeholder).
+# The recorded verdicts encode the schema: unknown, repeated, or missing keys,
+# non-token values, and malformed packages are all fatal.
+
+valid-minimal-shaped              accept -
+valid-chasm-shaped                accept -
+unknown-key                       reject mystery_key
+repeated-key                      reject repeated
+missing-packages                  reject packages
+bad-package-token                 reject package
+package-empty-item                reject package
+package-duplicate                 reject duplicate
+quoted-value                      reject plain token
+value-space                       reject plain token
+value-backslash                   reject plain token
+comment-only                      reject missing
+valid-comment-trailing            accept -

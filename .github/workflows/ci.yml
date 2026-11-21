@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Check gofmt
+        run: |
+          unformatted=$(gofmt -l cmd internal)
+          if [ -n "$unformatted" ]; then
+            echo 'Files needing gofmt:'
+            printf '%s\n' "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build ./cmd/...
+
+      - name: Test
+        run: go test ./...
+
+      - name: Shellcheck
+        run: |
+          git ls-files '*.sh' 'host-control/chasm-firewall' \
+            | xargs -r shellcheck --severity=warning
+
+      - name: Site profile gate
+        run: scripts/check-site-profiles.sh
+
+      - name: Descriptor parity gate
+        run: scripts/check-descriptor-parity.sh
+
+      - name: Portability gate
+        run: scripts/check-portability.sh
+
+      - name: Zero-plugin core gate
+        run: scripts/check-core-only.sh
+
+      - name: CI coverage gate
+        run: scripts/check-ci-coverage.sh
+
+      - name: Install modes tests
+        run: scripts/test-install-modes.sh
+
+      - name: Firewall helper tests
+        run: scripts/test-firewall-helper.sh
+
+      - name: Guest audit evidence tests
+        run: scripts/test-audit-sandbox.sh
+
+      - name: Provision re-run tests
+        run: scripts/test-provision-rerun.sh
+
+      - name: Builder address claim tests
+        run: scripts/test-builder-address-claim.sh
+
+      - name: Guest user layer tests
+        run: scripts/test-guest-user-layer.sh
+
+      - name: Profile root selection tests
+        run: scripts/test-profile-root-selection.sh
+
+      - name: Core package union tests
+        run: scripts/test-core-package-union.sh
+
+      - name: Resource prefix tests
+        run: scripts/test-resource-prefix.sh
+
+      # Plugins (docs/plugins.md) are gated explicitly and separately;
+      # none of them is a core payload dependency.
+      - name: Clipboard plugin tests
+        run: (cd plugins/clipboard && go vet ./... && go test ./...)
+
+      - name: SSH hardening plugin tests
+        run: plugins/ssh-hardening/test-ssh-hardening.sh
+
+      - name: Incus install plugin tests
+        run: plugins/install-incus/test-incus-install.sh

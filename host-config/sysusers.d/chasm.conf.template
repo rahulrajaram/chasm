@@ -1,0 +1,2 @@
+g @SUPERVISOR_USER@ -
+u @SUPERVISOR_USER@ - "Chasm Supervisor" /var/lib/chasm/supervisor /usr/sbin/nologin

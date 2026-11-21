@@ -1,0 +1,16 @@
+# Neutral zsh startup for the chasm guest account.
+#
+# This file exists so an interactive zsh skips its first-run
+# zsh-newuser-install menu ("You are seeing this message because you have
+# no zsh startup files"). It is template identity input: the template
+# identity helper digests it, the packages layer installs it as
+# /home/agent/.zshrc (agent:agent, 0644), and a resumed layer never
+# overwrites a file that drifted from this input. Keep it minimal and
+# neutral - no prompt frameworks, aliases, or agent-specific setup.
+
+HISTFILE=$HOME/.zsh_history
+HISTSIZE=10000
+SAVEHIST=10000
+bindkey -e
+# Pass unmatched globs through to the command instead of aborting it (zsh's default NOMATCH aborts bash-style patterns).
+setopt NO_NOMATCH

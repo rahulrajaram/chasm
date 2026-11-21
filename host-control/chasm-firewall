@@ -1,0 +1,232 @@
+#!/bin/sh
+set -eu
+
+# Apply or remove the chasm bridge firewall for this site.
+#
+# The ruleset is rendered from the installed template
+# (/etc/chasm/firewall.nft.template) using the site descriptor's
+# bridge name, after the pinned site identity has been verified. The
+# helper owns the inet chasm nftables table and, when iptables is present,
+# adds bridge-scoped accepts to INPUT and FORWARD so those packets are not
+# discarded by other host firewall chains after chasm has vetted them.
+# It does not rewrite Docker's rules or provide general host firewalling;
+# public destinations are not blocked by the chasm ruleset.
+#
+# Two override environment variables support repo-local testing:
+#   CHASM_SITE_HOST_LIB      path to require-site-host.sh (default:
+#                            /usr/local/lib/chasm/require-site-host.sh)
+#   CHASM_FIREWALL_TEMPLATE  path to the firewall ruleset template (default:
+#                            /etc/chasm/firewall.nft.template)
+
+TABLE_FAMILY=inet
+TABLE_NAME=chasm
+RULESET_TEMPLATE=${CHASM_FIREWALL_TEMPLATE:-/etc/chasm/firewall.nft.template}
+SITE_HOST_LIB=${CHASM_SITE_HOST_LIB:-/usr/local/lib/chasm/require-site-host.sh}
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+
+if [ -f "$SITE_HOST_LIB" ] && [ ! -L "$SITE_HOST_LIB" ]; then
+    # shellcheck source=/usr/local/lib/chasm/require-site-host.sh
+    . "$SITE_HOST_LIB"
+elif [ -f "$SCRIPT_DIR/../scripts/lib/require-site-host.sh" ]; then
+    # shellcheck source=scripts/lib/require-site-host.sh
+    . "$SCRIPT_DIR/../scripts/lib/require-site-host.sh"
+else
+    echo "safety stop: site identity library is not installed" >&2
+    exit 97
+fi
+
+case "${1:-}" in
+    apply|remove) ;;
+    *)
+        echo "usage: $0 {apply|remove}" >&2
+        exit 2
+        ;;
+esac
+
+require_site_host || {
+    echo "safety stop: refusing firewall changes outside the authorized site" >&2
+    exit 97
+}
+
+BRIDGE_INPUT_COMMENT=chasm_bridge
+
+# build_rescue_spec
+#
+# The one rescue rule specification, shared verbatim by the apply check, the
+# insert, the remove drain, and the absence verification, so apply/remove
+# idempotence cannot drift across hand-copied rules. SITE_BRIDGE_NAME is
+# grammar-validated without spaces and BRIDGE_INPUT_COMMENT is a fixed token,
+# so the unquoted word-split expansion at the call sites is a faithful argv.
+build_rescue_spec() {
+    rescue_spec="-i $SITE_BRIDGE_NAME -m comment --comment $BRIDGE_INPUT_COMMENT -j ACCEPT"
+}
+
+# sweep_bridge_accepts CHAIN
+#
+# Delete every chasm rescue accept in CHAIN that is bound to an
+# interface other than the pinned bridge. The accepts are inserted from the
+# live descriptor at apply time; without a sweep, a bridge_name change would
+# orphan unconditional accepts at the head of the previous interface —
+# invisible to drift reporting, which never inspects iptables — and the
+# remove branch could not match them either. Failures are loud on purpose:
+# a half-swept chain aborts the helper instead of reporting success.
+sweep_bridge_accepts() {
+    chain=$1
+    rules=$(iptables -S "$chain")
+    # Token-exact comment match: a substring filter would sweep a foreign
+    # rule whose comment merely begins with our token (for example
+    # chasm_bridge_ext), and a negated ! --comment rule does not
+    # mark a rule as ours at all. grep exit 1 (no match) is the normal
+    # empty case; any other failure is loud.
+    printf '%s\n' "$rules" \
+        | { grep -E -- "--comment[[:space:]]+${BRIDGE_INPUT_COMMENT}([[:space:]]|$)" || [ "$?" -eq 1 ]; } \
+        | while IFS= read -r rule; do
+            case "$rule" in
+                "-A $chain "*) ;;
+                *) continue ;;
+            esac
+            case "$rule" in
+                *'! --comment'*) continue ;;
+            esac
+            interface=$(printf '%s\n' "$rule" | awk \
+                '{ for (i = 2; i < NF; i++) if ($i == "-i") { print $(i + 1); exit } }')
+            case "$interface" in
+                ''|'!'*|"$SITE_BRIDGE_NAME") continue ;;
+            esac
+            delete_spec=$(printf '%s\n' "$rule" | sed 's/^-A /-D /')
+            # iptables -S prints one complete space-separated rule
+            # specification; its words must reach iptables unquoted.
+            # shellcheck disable=SC2086
+            iptables $delete_spec
+        done
+}
+
+# Without iptables, nft can still inspect the nft backend. A legacy
+# filter table cannot be inspected this way, so its presence is ambiguous.
+verify_no_rescue_rules() {
+    if [ -e /proc/net/ip_tables_names ]; then
+        legacy_tables=$(cat /proc/net/ip_tables_names) || exit 1
+        if printf '%s\n' "$legacy_tables" | grep -Fxq filter; then
+            echo "safety stop: install iptables to inspect the legacy filter table" >&2
+            exit 1
+        fi
+    fi
+    live_rules=$(nft list ruleset) || exit 1
+    case "$live_rules" in
+        *'comment "chasm_bridge"'*)
+            echo "safety stop: install iptables to reconcile existing chasm rescue rules" >&2
+            exit 1 ;;
+    esac
+}
+
+remove_table() {
+    tables=$(nft list tables) || exit 1
+    if printf '%s\n' "$tables" | grep -Fxq "table $TABLE_FAMILY $TABLE_NAME"; then
+        nft delete table "$TABLE_FAMILY" "$TABLE_NAME"
+    fi
+}
+
+render_ruleset() {
+    output=$1
+    [ -f "$RULESET_TEMPLATE" ] && [ ! -L "$RULESET_TEMPLATE" ] ||
+        { echo "safety stop: firewall ruleset template is missing or unsafe: $RULESET_TEMPLATE" >&2
+          exit 97; }
+    bridge_name=$(printf '%s\n' "$SITE_BRIDGE_NAME" | sed 's/[&|\\]/\\&/g')
+    # Appended after the caller's prelude (see apply); a surviving @TOKEN@
+    # means a drifted template, which must abort before nft sees the file.
+    sed -e "s|@BRIDGE_NAME@|$bridge_name|g" "$RULESET_TEMPLATE" >>"$output"
+    case "$(cat "$output")" in
+        *'@'[A-Za-z_][A-Za-z0-9_]*'@'*)
+            echo "safety stop: rendered firewall ruleset retains an unreplaced @TOKEN@" >&2
+            exit 97 ;;
+    esac
+}
+
+case "${1:-}" in
+    apply)
+        ruleset_tmp=$(mktemp)
+        trap 'rm -f -- "$ruleset_tmp"' EXIT
+        trap 'exit 129' HUP
+        trap 'exit 130' INT
+        trap 'exit 143' TERM
+        # Atomic swap in one nft transaction: declare-then-delete drops any
+        # stale table, the rendered definition follows, so the live table is
+        # never absent between the old and new ruleset.
+        printf 'table %s %s\ndelete table %s %s\n' \
+            "$TABLE_FAMILY" "$TABLE_NAME" "$TABLE_FAMILY" "$TABLE_NAME" >"$ruleset_tmp"
+        render_ruleset "$ruleset_tmp"
+        # Remove previous-interface accepts while the old table still vets
+        # that interface. Any failure leaves the old table in place.
+        if command -v iptables >/dev/null 2>&1; then
+            sweep_bridge_accepts INPUT
+            sweep_bridge_accepts FORWARD
+        else
+            verify_no_rescue_rules
+        fi
+        nft -f "$ruleset_tmp"
+        rm -f -- "$ruleset_tmp"
+        trap - EXIT
+        # Docker coexistence: an iptables INPUT chain with policy DROP (Docker
+        # sets FORWARD DROP, but some host firewalls set INPUT DROP too)
+        # swallows guest packets AFTER our table's accept, because an accept
+        # in one nft base chain does not exempt the packet from other tables'
+        # chains at the same hook. Our table runs first (priority filter-10)
+        # and already drops every bridge packet except DHCP and DNS,
+        # so this accept only rescues packets our own ruleset
+        # vetted. Idempotent; removed again by the remove branch.
+        if command -v iptables >/dev/null 2>&1; then
+            build_rescue_spec
+            for chain in INPUT FORWARD; do
+                # rescue_spec is one shared space-separated specification
+                # (see build_rescue_spec); its words must stay unquoted.
+                # shellcheck disable=SC2086
+                if iptables -C "$chain" $rescue_spec 2>/dev/null; then
+                    continue
+                else
+                    check_status=$?
+                    [ "$check_status" -eq 1 ] || exit "$check_status"
+                    # Same shared specification as the -C probe above.
+                    # shellcheck disable=SC2086
+                    iptables -I "$chain" $rescue_spec
+                fi
+            done
+        else
+            echo "firewall note: iptables is not installed; skipping the coexistence accepts (fine when no iptables-nft firewall is active)" >&2
+        fi
+        ;;
+    remove)
+        # Drain the rescue accepts BEFORE deleting the vetting table: while
+        # the table lives, bridge packets stay fail-closed even when a drain
+        # step fails. errexit does not apply inside while conditions, so a
+        # failed -D is indistinguishable from rule-absence inside the loop;
+        # each drain is therefore followed by an explicit absence check that
+        # treats any iptables error as fatal and skips remove_table, leaving
+        # the site fail-closed and surfacing a failed ExecStop.
+        if command -v iptables >/dev/null 2>&1; then
+            build_rescue_spec
+            for chain in INPUT FORWARD; do
+                # shellcheck disable=SC2086
+                while iptables -D "$chain" $rescue_spec 2>/dev/null; do
+                    : # remove every copy the apply branch may have added
+                done
+                # shellcheck disable=SC2086
+                if iptables -C "$chain" $rescue_spec 2>/dev/null; then
+                    echo "safety stop: the $chain bridge rescue rule survived removal" >&2
+                    exit 1
+                else
+                    drain_check=$?
+                    if [ "$drain_check" -ne 1 ]; then
+                        echo "safety stop: iptables could not verify the $chain rescue rule (exit $drain_check)" >&2
+                        exit 1
+                    fi
+                fi
+                # Also sweep accepts bound to any other interface: after a
+                # bridge_name change the exact-spec drain cannot match them.
+                sweep_bridge_accepts "$chain"
+            done
+        else
+            verify_no_rescue_rules
+        fi
+        remove_table
+        ;;
+esac

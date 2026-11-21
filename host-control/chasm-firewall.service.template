@@ -1,0 +1,21 @@
+[Unit]
+Description=chasm bridge firewall
+After=network-pre.target incus.service
+Wants=incus.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/chasm-firewall apply
+ExecReload=/usr/local/sbin/chasm-firewall apply
+ExecStop=/usr/local/sbin/chasm-firewall remove
+RemainAfterExit=yes
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+# iptables-legacy creates the shared /run/xtables.lock on first use.
+ProtectSystem=full
+# nftables uses NET_ADMIN. The legacy iptables backend also opens a raw socket.
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,8 @@
+# Patch residue from conflicted applies.
+*.rej
+
+# Go build artifacts from `go build ./cmd/...` at the repo root.
+/chasm
+/chasmctl
+/executor_server
+/supervisor_server

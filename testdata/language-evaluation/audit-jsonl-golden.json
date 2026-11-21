@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "inspect_success",
+      "at": "2026-08-30T20:30:00+00:00",
+      "peer_uid": 984,
+      "ok": true,
+      "error_code": null,
+      "request": {
+        "version": 1,
+        "request_id": "audit-inspect",
+        "operation": "inspect_default_sandbox"
+      },
+      "expected": "{\"at\":\"2026-08-30T20:30:00+00:00\",\"error_code\":null,\"ok\":true,\"operation\":\"inspect_default_sandbox\",\"peer_uid\":984,\"request_id\":\"audit-inspect\"}\n"
+    },
+    {
+      "name": "ensure_failure",
+      "at": "2026-08-30T20:30:00.123400+00:00",
+      "peer_uid": 984,
+      "ok": false,
+      "error_code": "invalid_state",
+      "request": {
+        "version": 1,
+        "request_id": "audit-ensure",
+        "operation": "ensure_guest_running",
+        "instance": "sandbox-demo"
+      },
+      "expected": "{\"at\":\"2026-08-30T20:30:00.123400+00:00\",\"error_code\":\"invalid_state\",\"instance\":\"sandbox-demo\",\"ok\":false,\"operation\":\"ensure_guest_running\",\"peer_uid\":984,\"request_id\":\"audit-ensure\"}\n"
+    },
+    {
+      "name": "performance_success",
+      "at": "2026-08-30T20:30:00.000001+00:00",
+      "peer_uid": 984,
+      "ok": true,
+      "error_code": null,
+      "request": {
+        "version": 1,
+        "request_id": "audit-performance",
+        "operation": "collect_performance",
+        "phase": "startup"
+      },
+      "expected": "{\"at\":\"2026-08-30T20:30:00.000001+00:00\",\"error_code\":null,\"ok\":true,\"operation\":\"collect_performance\",\"peer_uid\":984,\"request_id\":\"audit-performance\"}\n"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+[Unit]
+Description=chasm unprivileged supervisor socket
+ConditionPathExists=@SITE_MARKER_PATH@
+
+[Socket]
+ListenStream=/run/chasm-supervisor.sock
+SocketUser=root
+SocketGroup=@OPERATOR_USER@
+SocketMode=0660
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target
