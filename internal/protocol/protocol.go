@@ -137,6 +137,8 @@ type Request struct {
 	// repository, ...) so a server-side handler can dispatch without
 	// re-parsing. Set for both ParseExecutor and ParsePublic.
 	Fields map[string]interface{}
+	// LifecycleTimings is private executor dispatch state, never parsed from wire bytes.
+	LifecycleTimings map[string]int64
 }
 
 // RequestID returns the validated request_id identifier.

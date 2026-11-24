@@ -21,6 +21,14 @@ fail() {
     exit 1
 }
 
+# Only the executor supplies the private timing descriptor. Uptime is
+# monotonic and is sampled here, at the actual launcher phase boundary.
+timing_mark() {
+    [ "${CHASM_LIFECYCLE_TIMING:-}" = 1 ] || return 0
+    IFS=' ' read -r timing_uptime _ </proc/uptime || return 0
+    printf '%s %s %s\n' "$1" "$2" "$timing_uptime" >&3 || :
+}
+
 # The claim inventory itself is shared with the template builder
 # (lib/incus-ipv4-claims.sh): an address another instance already holds —
 # through an eth0 ipv4.address override, the site's instance-ipv4 metadata,
@@ -274,7 +282,9 @@ if ! incus info "$VM_NAME" >/dev/null 2>&1; then
         fail "sealed template retains a builder IPv4 address"
 
     echo "launch: phase=copy template=$template_name vm=$VM_NAME"
+    timing_mark clone begin
     incus copy "$template_name" "$VM_NAME" --instance-only
+    timing_mark clone end
     created=1
     incus config set "$VM_NAME" security.protection.delete=false
     incus config set "$VM_NAME" boot.autostart=false
@@ -372,15 +382,19 @@ launch_admission=$(/usr/local/bin/chasmctl --local-admit-launch "$VM_NAME" 2>&1)
 status=$(incus info "$VM_NAME" | awk '/^Status:/ {print $2}')
 
 if [ "$status" != RUNNING ]; then
+    timing_mark boot begin
     incus start "$VM_NAME"
+    timing_mark boot end
 fi
 
+timing_mark guest_agent_ready begin
 attempt=0
 while ! incus exec "$VM_NAME" -- true >/dev/null 2>&1; do
     attempt=$((attempt + 1))
     [ "$attempt" -lt 90 ] || fail "VM agent did not become ready within 180 seconds"
     sleep 2
 done
+timing_mark guest_agent_ready end
 systemd_attempt=0
 while :; do
     systemd_state=$(
@@ -533,9 +547,13 @@ fi
 machine_id=$(incus exec "$VM_NAME" -- cat /etc/machine-id)
 final_status=RUNNING
 if [ "$LEAVE_STOPPED" -eq 1 ]; then
+    timing_mark shutdown_request begin
     incus stop "$VM_NAME" --timeout 60
+    timing_mark shutdown_request end
+    timing_mark stopped_confirmation begin
     [ "$(incus info "$VM_NAME" | awk '/^Status:/ {print $2}')" = STOPPED ] ||
         fail "sandbox did not reach the requested stopped state"
+    timing_mark stopped_confirmation end
     final_status=STOPPED
 fi
 # The initialization marker is written only after every provisioning and

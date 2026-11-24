@@ -26,6 +26,8 @@ Commands:
   resize      Resize a stopped sandbox's memory, CPU, or root disk
   delete      Delete a stopped sandbox and its workspace volume
   shell       Open an interactive shell inside a sandbox
+  exec        Run a foreground command inside a running sandbox
+  doctor      Diagnose the installed host and site
 
 Options:
   -h, --help  Show help for Chasm or a command
@@ -36,6 +38,7 @@ Examples:
   chasm describe research --set "LLM evaluation and tooling"
   chasm start research
   chasm shell research
+  chasm exec research -- id
 
 Run 'chasm help COMMAND' for command details.
 Run 'chasm help aliases' for compatibility commands.
@@ -87,9 +90,8 @@ Example:
 const showHelp = `Show details for a sandbox or its observed filesystem layout.
 
 Usage:
-  chasm show
-  chasm show NAME
-  chasm show NAME --layout
+  chasm show [NAME] [--json]
+  chasm show NAME --layout [--json]
 
 Arguments:
   NAME        Logical sandbox name; defaults to the site's default_sandbox
@@ -396,6 +398,29 @@ func parseHelpRequest(arguments []string) helpRequest {
 	return helpRequest{}
 }
 
+const execHelp = `Run a command in a running sandbox as the unprivileged guest user.
+
+Usage:
+  chasm exec NAME [--cwd DIR] [--env KEY=VALUE ...] [--status-fd FD] -- COMMAND [ARG ...]
+
+Options:
+  --cwd DIR         Absolute guest path. Defaults to /home/agent.
+  --env KEY=VALUE   Set a guest environment entry. Keys must be unique.
+  --status-fd FD    Write one JSON result to an inherited writable fd >= 3.
+  -h, --help        Show this help.
+
+The mandatory -- separates Chasm options from the guest command. Stdin,
+stdout, and stderr are separate byte streams. Chasm forwards up to 256
+arguments, 64 environment entries, and 64 KiB of encoded request data.
+Individual values are limited to 16 KiB. Eight execs may run per site.
+
+Confirmed guest exits are returned as process exit statuses. Chasm uses
+124 when completion is unknown, 125 for a rejected request, and 126 for
+local setup failure. Use --status-fd to distinguish these from equal guest
+codes. Incus can report 129 after a VM disconnect, so an Incus return of
+129 has unknown completion. Ctrl-C requests TERM, followed by KILL if needed.
+`
+
 func isHelpFlag(argument string) bool {
 	return argument == "--help" || argument == "-h"
 }
@@ -408,6 +433,8 @@ func helpText(topic string) (string, bool) {
 		return createHelp, true
 	case "show":
 		return showHelp, true
+	case "doctor":
+		return "Diagnose the installed host and site without making changes.\n\nUsage:\n  chasm doctor [--json]\n", true
 	case "describe":
 		return describeHelp, true
 	case "repos":
@@ -426,6 +453,8 @@ func helpText(topic string) (string, bool) {
 		return deleteHelp, true
 	case "shell":
 		return shellHelp, true
+	case "exec":
+		return execHelp, true
 	case "aliases":
 		return aliasesHelp, true
 	case "list":

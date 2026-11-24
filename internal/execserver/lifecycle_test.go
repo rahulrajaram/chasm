@@ -19,7 +19,7 @@ func stopGuestWith(readState instanceStateReader, stop instanceStopper) (map[str
 	if err != nil {
 		return nil, err
 	}
-	return stopSandboxWith(instance, readState, stop)
+	return stopSandboxTimed(instance, readState, stop, nil)
 }
 
 func TestStopGuestTransitionsRunningInstanceAndProvesPostcondition(t *testing.T) {
@@ -83,12 +83,12 @@ func TestStopGuestFailsClosedOnIntermediateOrUnprovenState(t *testing.T) {
 }
 
 func TestStopNamedSandboxReturnsTheRequestedManagedInstance(t *testing.T) {
-	result, err := stopSandboxWith("sandbox-research", func() (map[string]interface{}, error) {
+	result, err := stopSandboxTimed("sandbox-research", func() (map[string]interface{}, error) {
 		return map[string]interface{}{"status": "Stopped", "pid": float64(0)}, nil
 	}, func() (int, error) {
 		t.Fatal("already-stopped sandbox must not be mutated")
 		return -1, nil
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

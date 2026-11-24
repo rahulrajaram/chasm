@@ -22,67 +22,80 @@ func JSONLAudit(dir string, file string) AuditFunc {
 
 func jsonlAuditWithClock(dir string, file string, expectedUID uint32, now func() time.Time) AuditFunc {
 	return func(request *protocol.Request, peerUID int, ok bool, errorCode string) error {
-		createdDirectory := false
-		if err := os.Mkdir(dir, 0o700); err != nil {
-			if !os.IsExist(err) {
-				return fmt.Errorf("create audit directory: %w", err)
-			}
-		} else {
-			createdDirectory = true
-			if err := os.Chmod(dir, 0o700); err != nil {
-				return fmt.Errorf("set audit directory mode: %w", err)
-			}
-		}
-		if info, err := os.Lstat(dir); err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 || !ownedBy(info, expectedUID) {
-			return fmt.Errorf("audit directory metadata is unsafe")
-		}
-		if createdDirectory {
-			if err := syncAuditDirectory(dir); err != nil {
-				return err
-			}
-			if err := syncAuditDirectory(filepath.Dir(dir)); err != nil {
-				return err
-			}
-		}
-		path := filepath.Join(dir, file)
-		_, statErr := os.Lstat(path)
-		createdFile := os.IsNotExist(statErr)
-		if statErr != nil && !createdFile {
-			return fmt.Errorf("inspect audit file: %w", statErr)
-		}
-		flags := os.O_WRONLY | os.O_APPEND | os.O_CREATE | syscall.O_CLOEXEC | syscall.O_NOFOLLOW
-		descriptor, err := os.OpenFile(path, flags, 0o600)
-		if err != nil {
-			return fmt.Errorf("open audit file: %w", err)
-		}
-		if info, err := descriptor.Stat(); err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || !ownedBy(info, expectedUID) {
-			_ = descriptor.Close()
-			return fmt.Errorf("audit file metadata is unsafe")
-		}
 		encoded, err := encodeAuditRecord(request, peerUID, ok, errorCode, now())
 		if err != nil {
-			_ = descriptor.Close()
 			return fmt.Errorf("encode audit record: %w", err)
 		}
-		written, writeErr := descriptor.Write(encoded)
-		if writeErr != nil || written != len(encoded) {
-			_ = descriptor.Close()
-			return fmt.Errorf("append audit record: %w", firstAuditError(writeErr, errors.New("short audit write")))
-		}
-		if err := descriptor.Sync(); err != nil {
-			_ = descriptor.Close()
-			return fmt.Errorf("sync audit record: %w", err)
-		}
-		if err := descriptor.Close(); err != nil {
-			return fmt.Errorf("close audit record: %w", err)
-		}
-		if createdFile {
-			if err := syncAuditDirectory(dir); err != nil {
-				return err
-			}
-		}
-		return nil
+		return appendAuditRecord(dir, file, expectedUID, encoded)
 	}
+}
+
+// AppendGuestExecAudit stores a redacted foreground execution record in its
+// own file under the executor's validated audit directory.
+func AppendGuestExecAudit(record any) error {
+	encoded, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+	return appendAuditRecord(auditRoot, "exec-audit.jsonl", 0, append(encoded, '\n'))
+}
+
+func appendAuditRecord(dir, file string, expectedUID uint32, encoded []byte) error {
+	createdDirectory := false
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		if !os.IsExist(err) {
+			return fmt.Errorf("create audit directory: %w", err)
+		}
+	} else {
+		createdDirectory = true
+		if err := os.Chmod(dir, 0o700); err != nil {
+			return fmt.Errorf("set audit directory mode: %w", err)
+		}
+	}
+	if info, err := os.Lstat(dir); err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 || !ownedBy(info, expectedUID) {
+		return fmt.Errorf("audit directory metadata is unsafe")
+	}
+	if createdDirectory {
+		if err := syncAuditDirectory(dir); err != nil {
+			return err
+		}
+		if err := syncAuditDirectory(filepath.Dir(dir)); err != nil {
+			return err
+		}
+	}
+	path := filepath.Join(dir, file)
+	_, statErr := os.Lstat(path)
+	createdFile := os.IsNotExist(statErr)
+	if statErr != nil && !createdFile {
+		return fmt.Errorf("inspect audit file: %w", statErr)
+	}
+	flags := os.O_WRONLY | os.O_APPEND | os.O_CREATE | syscall.O_CLOEXEC | syscall.O_NOFOLLOW
+	descriptor, err := os.OpenFile(path, flags, 0o600)
+	if err != nil {
+		return fmt.Errorf("open audit file: %w", err)
+	}
+	if info, err := descriptor.Stat(); err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || !ownedBy(info, expectedUID) {
+		_ = descriptor.Close()
+		return fmt.Errorf("audit file metadata is unsafe")
+	}
+	written, writeErr := descriptor.Write(encoded)
+	if writeErr != nil || written != len(encoded) {
+		_ = descriptor.Close()
+		return fmt.Errorf("append audit record: %w", firstAuditError(writeErr, errors.New("short audit write")))
+	}
+	if err := descriptor.Sync(); err != nil {
+		_ = descriptor.Close()
+		return fmt.Errorf("sync audit record: %w", err)
+	}
+	if err := descriptor.Close(); err != nil {
+		return fmt.Errorf("close audit record: %w", err)
+	}
+	if createdFile {
+		if err := syncAuditDirectory(dir); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func syncAuditDirectory(path string) error {
@@ -122,6 +135,9 @@ func encodeAuditRecord(request *protocol.Request, peerUID int, ok bool, errorCod
 	}
 	if instance := request.Instance(); instance != "" {
 		record["instance"] = instance
+	}
+	if len(request.LifecycleTimings) > 0 {
+		record["phase_timings_ms"] = request.LifecycleTimings
 	}
 	encoded, err := json.Marshal(record)
 	if err != nil {

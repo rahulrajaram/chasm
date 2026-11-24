@@ -571,6 +571,9 @@ func TestMissingDefaultSandboxFailsClosedNamingTheKey(t *testing.T) {
 }
 
 func TestPrivilegedShellIsIdentityAndManagedNameBoundAndNeverEntersGuestRoot(t *testing.T) {
+	previousResolver := resolvePrivilegedIncusSocket
+	resolvePrivilegedIncusSocket = func() (string, error) { return "/run/incus/unix.socket", nil }
+	t.Cleanup(func() { resolvePrivilegedIncusSocket = previousResolver })
 	var got invocation
 	hostChecks := 0
 	values := map[string]string{"SUDO_USER": "chasmops", "TERM": "screen-256color"}
@@ -579,7 +582,7 @@ func TestPrivilegedShellIsIdentityAndManagedNameBoundAndNeverEntersGuestRoot(t *
 		return nil
 	}, captureExecutor(&got), discardFile(t), discardFile(t))
 	joined := strings.Join(got.arguments, " ")
-	if code != 0 || hostChecks != 1 || got.path != incusPath {
+	if code != 0 || hostChecks != 1 || got.path != incusPath || !strings.Contains(strings.Join(got.environment, "\n"), "INCUS_SOCKET=/run/incus/unix.socket") {
 		t.Fatalf("code=%d host_checks=%d invocation=%+v", code, hostChecks, got)
 	}
 	for _, required := range []string{"--force-local exec sandbox-research", "--user 1001", "--group 1001", "--cwd /home/agent", "/usr/bin/zsh -l"} {

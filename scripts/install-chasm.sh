@@ -107,7 +107,8 @@ fi
 INSTALLED_SITE_CONF=/etc/chasm/site.conf
 INSTALL_LIB=/usr/local/lib/chasm
 INSTALL_PROVISION=$INSTALL_LIB/provision
-INSTALL_GO=$INSTALL_LIB/go
+INSTALL_GO=/usr/local/libexec/chasm
+INSTALL_OLD_GO=$INSTALL_LIB/go
 INSTALL_BIN=/usr/local/bin
 INSTALL_FIREWALL_HELPER=/usr/local/sbin/chasm-firewall
 INSTALL_FIREWALL_TEMPLATE=/etc/chasm/firewall.nft.template
@@ -156,6 +157,10 @@ usage: install-chasm.sh [--help|--check|--provision|--verify]
                default; requires the plugins/install-incus add-on, Debian
                12/13 only). Without the flag core installs no packages:
                install incus and virtiofsd yourself.
+  --allow-untested-host
+               explicitly bypass the non-Debian qualification gate for
+               --provision; prerequisites still must pass. Equivalent to
+               CHASM_ALLOW_UNTESTED_HOST=1; does not mark the distro tested.
 
 The plugin flags apply only to --provision and are rejected (usage error)
 with any other mode.
@@ -195,9 +200,13 @@ Options (--provision only):
                (bookworm). OFF by default: without the flag the installer
                installs no packages and requires incus and virtiofsd to be
                present already. Requires the plugins/install-incus add-on.
+  --allow-untested-host
+               explicitly proceed on a non-Debian, unqualified distro.
+               Capability checks still run; this does not qualify the host.
 
 Environment:
   CHASM_ASSUME_YES=1   pre-approve every provisioning step
+  CHASM_ALLOW_UNTESTED_HOST=1   explicitly bypass the non-Debian qualification gate
   CHASM_SITE_CONF      alternate descriptor path (rejected under --provision)
 
 Steps --provision runs (one approval per step):
@@ -375,6 +384,11 @@ drift_report() {
 
     for binary in $GO_BINARIES; do
         check_exec "$INSTALL_GO/$binary" "control-plane binary"
+        if [ -e "$INSTALL_OLD_GO/$binary" ] && [ ! -L "$INSTALL_OLD_GO/$binary" ]; then
+            drift "legacy binary is not a compatibility symlink: $INSTALL_OLD_GO/$binary"
+        else
+            check_symlink "$INSTALL_OLD_GO/$binary" "$INSTALL_GO/$binary" "legacy binary compatibility link"
+        fi
     done
     check_symlink "$INSTALL_BIN/chasm" "$INSTALL_GO/chasm" "chasm CLI link"
     # chasm-clipboard is an optional plugin helper (docs/plugins.md). Core
@@ -382,6 +396,30 @@ drift_report() {
     # earlier core release is left in place and keeps working through the
     # explicit `chasm-clipboard -- chasm shell NAME` invocation.
     check_symlink "$INSTALL_BIN/chasmctl" "$INSTALL_GO/chasmctl" "chasmctl CLI link"
+    if resolved_incus_socket=$(incus_socket_probe 2>/dev/null); then
+        INCUS_SOCKET=$resolved_incus_socket
+        export INCUS_SOCKET
+        ok "Incus local socket resolved: $resolved_incus_socket"
+    else
+        drift "Incus local socket is unavailable or configured path is invalid"
+    fi
+    if [ -f /etc/chasm/incus-socket ]; then
+        [ "$(stat -c '%U:%G:%a' /etc/chasm/incus-socket 2>/dev/null || true)" = root:root:600 ] ||
+            drift "Incus socket setting metadata is not root:root 0600"
+    else
+        ok "Incus socket setting uses standard path discovery"
+    fi
+    if selinux_enforcing; then
+        for binary in $GO_BINARIES; do
+            if selinux_bin_label "$INSTALL_GO/$binary"; then
+                ok "SELinux executable label bin_t: $INSTALL_GO/$binary"
+            else
+                drift "SELinux executable label is not bin_t: $INSTALL_GO/$binary (fix: restorecon -v $INSTALL_GO/$binary)"
+            fi
+        done
+    else
+        skip "SELinux executable labels (SELinux not enforcing or unavailable)"
+    fi
 
     check_file "$INSTALL_PROVISION/scripts/lib/require-site-host.sh" "provision tree (scripts)"
     if [ -d "$INSTALL_PROVISION/guest-config/profiles" ] && \
@@ -398,6 +436,16 @@ drift_report() {
 
     for unit in $UNITS; do
         check_file "/etc/systemd/system/$unit" "systemd unit"
+    done
+    for unit in chasm-executor.service chasm-supervisor.service; do
+        server=${unit#chasm-}
+        server=${server%.service}_server
+        if [ -f "/etc/systemd/system/$unit" ] &&
+            check_service_executable "/etc/systemd/system/$unit" "$INSTALL_GO/$server"; then
+            ok "systemd executable path migrated: $unit"
+        else
+            drift "systemd unit has an old or invalid executable path: $unit (expected /usr/local/libexec/chasm/)"
+        fi
     done
     check_file /etc/sudoers.d/chasm "sudoers fragment"
     check_file /usr/lib/sysusers.d/chasm.conf "sysusers fragment"
@@ -553,10 +601,65 @@ p_ok()   { echo "ok    $*"; }
 # VIRTIOFSD_LIBEXEC defaults to /usr/libexec/virtiofsd; the test harness
 # overrides it, and an explicitly set value is also honoured in production.
 virtiofsd_probe() {
-    virtiofsd_libexec=${VIRTIOFSD_LIBEXEC:-/usr/libexec/virtiofsd}
     virtiofsd_path=$(command -v virtiofsd || true)
-    [ -z "$virtiofsd_path" ] && [ -x "$virtiofsd_libexec" ] && virtiofsd_path=$virtiofsd_libexec
-    [ -n "$virtiofsd_path" ]
+    [ -z "$virtiofsd_path" ] || return 0
+    [ "$#" -gt 0 ] || set -- "${VIRTIOFSD_LIBEXEC:-/usr/libexec/virtiofsd}" /usr/lib/virtiofsd /usr/lib/qemu/virtiofsd
+    for virtiofsd_candidate do
+        if [ -f "$virtiofsd_candidate" ] && [ -x "$virtiofsd_candidate" ]; then
+            virtiofsd_path=$virtiofsd_candidate
+            return 0
+        fi
+    done
+    return 1
+}
+
+incus_socket_probe() {
+	if [ -n "${INCUS_SOCKET:-}" ]; then
+		incus_socket_candidate=$INCUS_SOCKET
+	elif [ -e /etc/chasm/incus-socket ] || [ -L /etc/chasm/incus-socket ]; then
+		[ -f /etc/chasm/incus-socket ] && [ ! -L /etc/chasm/incus-socket ] &&
+			[ "$(stat -c '%U:%G:%a' /etc/chasm/incus-socket 2>/dev/null || true)" = root:root:600 ] &&
+			[ "$(wc -l </etc/chasm/incus-socket)" -eq 1 ] &&
+			[ "$(wc -c </etc/chasm/incus-socket)" -le 4096 ] || return 1
+		incus_socket_candidate=$(cat /etc/chasm/incus-socket) || return 1
+	else
+		incus_socket_candidate=
+		for candidate in /var/lib/incus/unix.socket /run/incus/unix.socket; do
+			if [ -S "$candidate" ]; then incus_socket_candidate=$candidate; break; fi
+		done
+	fi
+	case "$incus_socket_candidate" in /*) ;; *) return 1 ;; esac
+	case "$incus_socket_candidate" in *[!A-Za-z0-9_./-]*|'') return 1 ;; esac
+	case "$incus_socket_candidate" in *//*|*/./*|*/../*|*/.|*/..|*/) return 1 ;; esac
+	[ "${#incus_socket_candidate}" -le 107 ] && [ ! -L "$incus_socket_candidate" ] && [ -S "$incus_socket_candidate" ] || return 1
+	printf '%s\n' "$incus_socket_candidate"
+}
+
+incus_agent_probe() {
+    incus_agent_path=$(command -v incus-agent || true)
+    [ -z "$incus_agent_path" ] || return 0
+    [ "$#" -gt 0 ] || set -- /usr/libexec/incus/incus-agent /usr/lib/incus/incus-agent /usr/libexec/incus-agent
+    for agent_candidate do
+        if [ -f "$agent_candidate" ] && [ -x "$agent_candidate" ]; then
+            incus_agent_path=$agent_candidate
+            return 0
+        fi
+    done
+    return 1
+}
+
+go_version_at_least() {
+	actual=$1
+	minimum=$2
+	case "$actual" in go*) actual=${actual#go} ;; esac
+	awk -v actual="$actual" -v minimum="$minimum" 'BEGIN {
+	  na=split(actual,a,"."); nm=split(minimum,m,".");
+	  if (na<2 || na>3 || nm<2 || nm>3) exit 1;
+	  for (i=1;i<=na;i++) if (a[i] !~ /^[0-9]+$/) exit 1;
+	  for (i=1;i<=nm;i++) if (m[i] !~ /^[0-9]+$/) exit 1;
+	  for (i=1;i<=3;i++) { av=(i<=na ? a[i]+0 : 0); mv=(i<=nm ? m[i]+0 : 0); if (av>mv) exit 0; if (av<mv) exit 1; }
+	  exit 0
+	}'
 }
 
 incus_preflight_check() {
@@ -573,6 +676,11 @@ incus_preflight_check() {
         else
             p_fail "virtiofsd is missing (Incus VM disk shares need it; install the distro package or: cargo install virtiofsd --locked --version 1.13.2 && install it to /usr/libexec/virtiofsd)"
         fi
+        if incus_agent_probe; then
+            p_ok "Incus host agent present: $incus_agent_path"
+        else
+            p_fail "Incus host agent is missing (install the incus-agent package from your Incus distribution; template VM readiness depends on it)"
+        fi
     else
         INCUS_INSTALL_NEEDED=1
         if [ "$INSTALL_INCUS" -eq 1 ] && [ -f "$INCUS_INSTALL_PLUGIN" ] && [ ! -L "$INCUS_INSTALL_PLUGIN" ]; then
@@ -583,22 +691,80 @@ incus_preflight_check() {
     fi
 }
 
-preflight() {
-    echo "install: preflight"
-
-    # Debian family: /etc/os-release must name Debian or a Debian derivative.
+check_host_distribution() {
     debian_family=0
-    if [ -r /etc/os-release ]; then
-        os_id=$(sed -n 's/^ID=//p' /etc/os-release | head -n1)
-        os_like=$(sed -n 's/^ID_LIKE=//p' /etc/os-release | head -n1)
-        case "$os_id $os_like" in
-            *debian*) debian_family=1 ;;
-        esac
+    if [ -r "$1" ]; then
+        if awk -F= '/^ID(_LIKE)?=/ {
+            gsub(/"/, "", $2)
+            n = split($2, words, /[[:space:]]+/)
+            for (i = 1; i <= n; i++) if (words[i] == "debian") found = 1
+        }
+        END { exit !found }' "$1"; then
+            debian_family=1
+        fi
     fi
     if [ "$debian_family" -eq 1 ]; then
         p_ok "Debian-family host"
+    elif [ "$ALLOW_UNTESTED_HOST" -eq 1 ] || [ "${CHASM_ALLOW_UNTESTED_HOST:-0}" = 1 ]; then
+        p_note "WARNING: continuing on an untested distro by explicit operator opt-in; capability checks do not qualify this distro"
     else
-        p_fail "host is not Debian-family (see /etc/os-release)"
+        p_fail "host is not Debian-family; this distro is untested. Re-run --provision with --allow-untested-host or CHASM_ALLOW_UNTESTED_HOST=1 after reviewing the qualification risk"
+    fi
+}
+
+selinux_enforcing() {
+    command -v getenforce >/dev/null 2>&1 && [ "$(getenforce 2>/dev/null || true)" = Enforcing ]
+}
+
+selinux_bin_label() {
+    ls -Z "$1" 2>/dev/null | awk '{print $1}' | grep -q ':bin_t:'
+}
+
+check_service_executable() {
+    awk -v executable="$2" '
+        /^ExecStart=/ {
+            starts++;
+            if ($1 == "ExecStart=" executable) valid++;
+        }
+        END { exit !(starts == 1 && valid == 1) }
+    ' "$1"
+}
+
+install_go_payload() {
+    # Publish compatibility and CLI links only after every executable has
+    # been installed and checked under the host label policy.
+    for binary in $GO_BINARIES; do
+        install -o root -g root -m 0755 "$1/$binary" "$INSTALL_GO/$binary" ||
+            fail "could not install $INSTALL_GO/$binary"
+    done
+    if selinux_enforcing; then
+        command -v restorecon >/dev/null 2>&1 || fail "SELinux is enforcing but restorecon is unavailable"
+        for binary in $GO_BINARIES; do
+            restorecon -F "$INSTALL_GO/$binary" || fail "could not restore the SELinux label: $INSTALL_GO/$binary"
+            selinux_bin_label "$INSTALL_GO/$binary" ||
+                fail "SELinux label is not bin_t after restorecon: $INSTALL_GO/$binary"
+        done
+    fi
+    for binary in $GO_BINARIES; do
+        ln -sfn "$INSTALL_GO/$binary" "$INSTALL_OLD_GO/$binary"
+    done
+    ln -sfn "$INSTALL_GO/chasm" "$INSTALL_BIN/chasm"
+    ln -sfn "$INSTALL_GO/chasmctl" "$INSTALL_BIN/chasmctl"
+}
+
+preflight() {
+    echo "install: preflight"
+
+    check_host_distribution /etc/os-release
+
+    if command -v incus >/dev/null 2>&1; then
+        if resolved_incus_socket=$(incus_socket_probe); then
+            INCUS_SOCKET=$resolved_incus_socket
+            export INCUS_SOCKET
+            p_ok "Incus local socket: $resolved_incus_socket"
+        else
+            p_fail "Incus local Unix socket is unavailable or invalid (set INCUS_SOCKET to an absolute existing socket)"
+        fi
     fi
 
     if [ -d /run/systemd/system ]; then
@@ -738,7 +904,13 @@ preflight() {
 
     # The binaries are built from this tree, so a Go toolchain is required.
     if command -v go >/dev/null 2>&1; then
-        p_ok "Go toolchain present: $(command -v go)"
+        go_minimum=$(awk '$1 == "go" { print $2; exit }' "$PROVISION_ROOT/go.mod")
+        go_actual=$(go version 2>/dev/null | awk '{ print $3 }')
+        if [ -n "$go_minimum" ] && go_version_at_least "$go_actual" "$go_minimum"; then
+            p_ok "Go toolchain present: $(command -v go) ($go_actual; minimum $go_minimum)"
+        else
+            p_fail "Go $go_minimum or newer is required by go.mod (found ${go_actual:-unknown}); install a newer Go toolchain and ensure it precedes the distro default in PATH"
+        fi
     else
         p_fail "no Go toolchain in PATH (the installer builds the control plane from this tree)"
     fi
@@ -833,12 +1005,13 @@ install_payload() {
         [ -f "$staging/$binary" ] || fail "the build did not produce $binary"
     done
 
-    install -d -o root -g root -m 0755 "$INSTALL_LIB" "$INSTALL_GO" "$INSTALL_PROVISION" /etc/chasm
-    for binary in $GO_BINARIES; do
-        install -o root -g root -m 0755 "$staging/$binary" "$INSTALL_GO/$binary"
-    done
-    ln -sfn "$INSTALL_GO/chasm" "$INSTALL_BIN/chasm"
-    ln -sfn "$INSTALL_GO/chasmctl" "$INSTALL_BIN/chasmctl"
+    install -d -o root -g root -m 0755 "$INSTALL_LIB" "$INSTALL_GO" "$INSTALL_OLD_GO" "$INSTALL_PROVISION" /etc/chasm
+    if [ "$INCUS_SOCKET_EXPLICIT" -eq 1 ]; then
+        incus_socket_probe >/dev/null || fail "INCUS_SOCKET must be an absolute path to an existing local Unix socket"
+        printf '%s\n' "$INCUS_SOCKET" >"$staging/incus-socket"
+        install -o root -g root -m 0600 "$staging/incus-socket" /etc/chasm/incus-socket
+    fi
+    install_go_payload "$staging"
 
     # The staging directory has served its only purpose (the build and the
     # binary installs above); remove it and disarm this step's cleanup trap
@@ -942,6 +1115,7 @@ install_incus_step() {
     install_incus
     command -v incus >/dev/null 2>&1 || fail "incus is missing after the install-incus acquisition step"
     virtiofsd_probe || fail "virtiofsd is missing after the install-incus acquisition step"
+    incus_agent_probe || fail "incus-agent is missing after the install-incus acquisition step; install the distro's Incus agent package"
 }
 
 # apply_pool_resize: idiom 3 — pool growth through provision. Called when
@@ -1124,10 +1298,14 @@ cmd_provision() {
 install_mode=
 HARDEN_SSH=0
 INSTALL_INCUS=0
+ALLOW_UNTESTED_HOST=0
+INCUS_SOCKET_EXPLICIT=0
+[ -n "${INCUS_SOCKET:-}" ] && INCUS_SOCKET_EXPLICIT=1
 for install_argument in "$@"; do
     case "$install_argument" in
         --harden-ssh) HARDEN_SSH=1 ;;
         --install-incus) INSTALL_INCUS=1 ;;
+        --allow-untested-host) ALLOW_UNTESTED_HOST=1 ;;
         *)
             [ -z "$install_mode" ] || usage
             install_mode=$install_argument
@@ -1147,7 +1325,7 @@ esac
 # --harden-ssh and --install-incus only shape the --provision sshd and
 # Incus steps; anywhere else they would be silently inert, so refuse them
 # as the usage errors they are.
-if [ "$HARDEN_SSH" -eq 1 ] || [ "$INSTALL_INCUS" -eq 1 ]; then
+if [ "$HARDEN_SSH" -eq 1 ] || [ "$INSTALL_INCUS" -eq 1 ] || [ "$ALLOW_UNTESTED_HOST" -eq 1 ]; then
     [ "$install_mode" = "--provision" ] || usage
 fi
 

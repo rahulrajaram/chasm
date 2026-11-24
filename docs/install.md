@@ -1,7 +1,10 @@
 # Installing chasm
 
 These instructions provision a fresh Debian (x86_64) host — tested on
-Debian 13; Debian 12 is untested. The installer is
+Debian 13; Debian 12 is untested. Fedora 45, Ubuntu 24.04/26.04, and Arch
+also completed trial-only runs, but remain unqualified for this source until
+the current portability fixes are rerun through install, upgrade, and verify.
+The installer is
 `scripts/install-chasm.sh` in this repository; run it from a checkout.
 
 ```sh
@@ -28,7 +31,7 @@ invocation therefore needs a root-owned checkout; when invoked through
 - `/dev/kvm` present, and nested virtualization **disabled** (below).
 - systemd, nftables and iproute2. A fresh managed Btrfs pool needs
   `btrfs-progs`, and the managed Incus bridge needs `dnsmasq-base`.
-- Incus and `virtiofsd` — install them yourself, or opt in to the
+- Incus, its host `incus-agent` executable/package, and `virtiofsd` — install them yourself, or opt in to the
   acquisition step with `--install-incus` during provisioning. That step
   uses Debian's own repositories: the release's repositories on Debian
   13 (trixie) and newer, or `bookworm-backports` on Debian 12 (bookworm;
@@ -77,7 +80,7 @@ own sandboxes included — are unaffected.
 
 ```text
 install-chasm.sh [--help|--check|--provision|--verify] [--harden-ssh]
-                 [--install-incus]
+                 [--install-incus] [--allow-untested-host]
 ```
 
 - `--provision` — first-run installation. Every root step prompts for
@@ -99,6 +102,10 @@ install-chasm.sh [--help|--check|--provision|--verify] [--harden-ssh]
   usage error with any other mode. Requires the optional
   `plugins/install-incus` add-on; without the flag the installer installs
   no packages and requires incus and virtiofsd to be present already.
+- `--allow-untested-host` — explicitly bypass the non-Debian qualification
+  gate for provisioning. Capability checks still run, and this does not make
+  the distro supported. Equivalent environment opt-in: set
+  `CHASM_ALLOW_UNTESTED_HOST=1`.
 - `--help` — the full installer surface.
 
 `CHASM_SITE_CONF` selects an alternate descriptor path for read-only
@@ -119,18 +126,29 @@ all checks and read the skipped count in the summary.
 
 In order, one approval per step:
 
-1. **Preflight** (read-only): Debian family, systemd, nftables, `/dev/kvm`
+1. **Preflight** (read-only): Debian-family qualification gate (non-Debian
+   hosts require `--allow-untested-host` or `CHASM_ALLOW_UNTESTED_HOST=1`),
+   systemd, nftables, `/dev/kvm`
    with nesting off, disk headroom, storage pool growth plan, Docker
    coexistence detection (informational), sandbox bridge prefix collision,
    operator account, resolved through host NSS, Go toolchain, Incus and
-   virtiofsd presence. The installed supervisor unit permits only
+   virtiofsd and host `incus-agent` presence, and a Go toolchain at the
+   version required by `go.mod`. The installed supervisor unit permits only
    Unix-domain sockets. Network-backed NSS configurations therefore
    require a local Unix-socket resolver proxy (for example, SSSD or
    nslcd), with its socket accessible under the unit's other
    restrictions; direct network-socket NSS backends are unsupported.
    Preflight runs `getent` outside the unit and does not enforce this
    limit, so it may pass even when the supervisor later fails to resolve
-   the operator.
+   the operator. Capability checks on an untested distro do not make it
+   supported. Automatic Incus package installation remains Debian-only.
+   Incus socket discovery uses `INCUS_SOCKET`, then
+   `/var/lib/incus/unix.socket`, then `/run/incus/unix.socket`. An explicit
+   override must name an existing local Unix socket. Set `INCUS_SOCKET`
+   during provisioning to persist that path in root-owned
+   `/etc/chasm/incus-socket` (mode 0600); Chasm services and the narrow shell
+   helper use this fixed setting without inheriting arbitrary caller
+   environment.
 2. **Incus install** (only with `--install-incus` and only if absent):
    `apt-get install incus virtiofsd` from the release's own repositories
    on Debian 13 (trixie) and newer; on Debian 12 (bookworm),
@@ -150,7 +168,8 @@ In order, one approval per step:
    `/etc/chasm/site-host-id` (root 0444, create-once). Every later
    privileged entry verifies the host against this pin.
 5. **Payload install**: builds the Go binaries and installs them under
-   `/usr/local/lib/chasm/go/`, symlinks `chasm` and
+   `/usr/local/libexec/chasm/` (SELinux enforcing hosts run `restorecon`
+   and verify `bin_t` labels), symlinks `chasm` and
    `chasmctl` into `/usr/local/bin/`, copies the provision tree (scripts,
    host and guest configuration) under
    `/usr/local/lib/chasm/provision/`, installs the core profile manifest

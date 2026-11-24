@@ -184,6 +184,9 @@ func HandleConnection(connection *net.UnixConn, expectedUID int, dispatch Dispat
 		return
 	}
 
+	if lifecycleOperation(parsed.Operation) != "" {
+		parsed.LifecycleTimings = make(map[string]int64)
+	}
 	result, dispatchErr := dispatch(*parsed)
 	closeDescriptors(descriptors)
 	if dispatchErr != nil {

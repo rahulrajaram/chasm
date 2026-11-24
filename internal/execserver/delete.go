@@ -45,7 +45,14 @@ type deleteStep struct {
 func deleteSandbox(request protocol.Request) (map[string]interface{}, error) {
 	instance := request.Instance()
 	return withLifecycleLock(func() (map[string]interface{}, error) {
-		return deleteSandboxWith(instance, productionDeleteEnvironment(instance))
+		result, err := deleteSandboxWith(instance, productionDeleteEnvironment(instance))
+		if err != nil {
+			return nil, err
+		}
+		if err := removeLifecycleObservations(lifecycleRoot(), 0, instance); err != nil {
+			return nil, protoError("operation_failed", "sandbox was deleted but its lifecycle observations could not be removed")
+		}
+		return result, nil
 	})
 }
 

@@ -52,8 +52,12 @@ a profile default alone leaves explicit instance settings in effect.
 ## Installation boundaries
 
 Chasm manages the local Incus daemon through the standard
-`/var/lib/incus/unix.socket` in the default project. Changing the resource
-prefix affects object ownership and naming. Each deployment still needs
+`/var/lib/incus/unix.socket` in the default project. It also checks
+`/run/incus/unix.socket` for distributions that place the local socket there;
+an explicit `INCUS_SOCKET` takes precedence and must name an existing local
+Unix socket. Provisioning can persist an explicit path in the root-owned
+`/etc/chasm/incus-socket`. Changing the resource prefix affects object
+ownership and naming. Each deployment still needs
 its own control services, state and firewall if it is to function as an
 independent site.
 

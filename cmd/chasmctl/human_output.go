@@ -104,6 +104,7 @@ func renderHumanResult(command string, result map[string]interface{}, stdout io.
 			return true, err
 		}
 		renderSandboxStatus(stdout, status, style)
+		renderLifecycleObservations(stdout, result)
 		if resources, present := parseHumanSandboxResources(result); present {
 			renderSandboxResources(stdout, resources, status.Detail.Name, style)
 		}
@@ -114,6 +115,7 @@ func renderHumanResult(command string, result map[string]interface{}, stdout io.
 			return true, err
 		}
 		renderSandboxDetail(stdout, detail, style)
+		renderLifecycleObservations(stdout, result)
 		if resources, present := parseHumanSandboxResources(result); present {
 			renderSandboxResources(stdout, resources, detail.Name, style)
 		}

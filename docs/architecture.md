@@ -12,9 +12,9 @@ typical command. The security consequences are drawn out in
 operator
   │  chasm (unprivileged CLI)          chasmctl (unprivileged CLI)
   │       │                                   │
-  │       │  sudo (one narrow grant)          │ Unix socket
+  │       │  sudo (narrow entry grants)       │ Unix socket
   │       ▼                                   ▼
-  │  chasm __shell ──► incus exec     chasm-supervisor.service
+  │  chasm __shell / __exec ──► Incus  chasm-supervisor.service
   │                                      (unprivileged service user)
   │                                             │ Unix socket,
   │                                             │ peer-credential gated
@@ -30,17 +30,22 @@ operator
   and a root-owned entry helper to open a shell in the VM as the guest
   user. Lifecycle and observation commands never touch Incus themselves:
   they are delegated to the unprivileged supervisor, and only the
-  root executor (its sole client) invokes Incus on their behalf. The one
-  exception is the interactive shell: through the sudo grant, the
+  root executor (its sole client) invokes Incus on their behalf. For
+  the interactive shell, the
   root-owned `chasm __shell` entry executes a fixed `/usr/bin/incus exec`
   invocation as the guest user (`cmd/chasm/main.go`, `runPrivilegedShell`);
   only the sudo approval itself is non-interactive (`sudo -n`), while the
   guest shell it launches is interactive (`--mode interactive`,
-  `/usr/bin/zsh -l`). chasm never grants general Incus or root access.
+  `/usr/bin/zsh -l`). Foreground `chasm exec` uses the exact `chasm __exec`
+  sudo entry with a bounded framed request over pipes. The helper checks
+  the site pin, the sandbox's managed metadata, and the local Incus peer
+  UID. It opens separate non-interactive WebSocket streams for stdin,
+  stdout, stderr, and signal control. Exec stays outside the serial
+  lifecycle request loop and uses eight independent, file-locked slots.
 - **`cmd/chasmctl`** — the operator-level CLI over the supervisor.
   JSON by default.
-- **`cmd/executor_server`** (`chasm-executor.service`, **root**) — the
-  only privileged component. Socket-activated on
+- **`cmd/executor_server`** (`chasm-executor.service`, **root**) —
+  socket-activated on
   `/run/chasm-executor.sock`, which is root-owned, group-restricted to
   the supervisor user, mode 0660. It gates every connection on
   kernel-provided peer credentials, runs a fixed set of privileged
@@ -92,13 +97,14 @@ operator
 | Operator → supervisor | Unix socket, root-owned, operator group, mode 0660; supervisor checks the peer uid against an allowlist |
 | Supervisor → executor | Unix socket, root-owned, supervisor group, mode 0660; executor rejects any peer uid other than the supervisor's, before parsing anything |
 | Operator → VM shell | sudoers grant naming only the `chasm __shell` entry helper; the helper re-validates the single sandbox name, the site identity pin, and the guest uid/gid |
+| Operator → foreground guest command | Exact `chasm __exec` sudo entry. The helper validates and audits framed requests, checks the VM's managed metadata, and uses the site's fixed guest UID/GID. |
 | Host ↔ guest | Full VM boundary: shared volumes are virtiofs disk shares, not host paths; the guest has no host credentials |
 | Guest → network | The nftables `inet chasm` table admits IPv4 DHCP/DNS to the host, drops routed IPv6 and private/reserved IPv4, and allows public IPv4 egress. Switching between guests on the same bridge is outside these rules. |
 | Anything → privileged scripts | Every privileged helper verifies the site identity pin first and refuses otherwise |
 
-**What runs as root:** only `chasm-executor.service` (and the narrow
-sudo entry path into `incus exec` for shells). The supervisor, both CLIs,
-and the clipboard helper never run privileged.
+The executor service and the dedicated shell and exec entry helpers run as
+root. The supervisor, public CLI invocations, and clipboard helper run
+unprivileged.
 
 ## Data flow: `chasm start research`
 

@@ -333,13 +333,9 @@ func scanSandboxLayout(instance string, depth int) ([]catalogEntry, error) {
 
 var runIncus = incusExec
 
-func runLauncher(instance string, leaveStopped bool) error {
-	return runLauncherWithBudget(instance, leaveStopped, 0)
-}
-
-func runLauncherWithBudget(instance string, leaveStopped bool, requestedBudget int64) error {
-	values := incusEnvironment()
-	if values == nil {
+func runLauncherWithBudget(instance string, leaveStopped bool, requestedBudget int64, timings lifecycleTimings) error {
+	values, err := incusEnvironment()
+	if err != nil {
 		return protoError("unsafe_state", "Incus client environment is unsafe")
 	}
 	if requestedBudget != 0 {
@@ -375,7 +371,11 @@ func runLauncherWithBudget(instance string, leaveStopped bool, requestedBudget i
 	stderr := &boundedBuffer{limit: 64 * 1024}
 	command.Stdout = stdout
 	command.Stderr = stderr
-	err = command.Run()
+	if timings == nil {
+		err = command.Run()
+	} else {
+		err = runInstrumentedLauncher(command, timings)
+	}
 	if ctx.Err() != nil {
 		return protoError("invalid_state", "sandbox creation timed out")
 	}
@@ -595,7 +595,7 @@ var reservedSandboxHosts = []int{10, 11}
 // and records protocol.DefaultSandboxBudgetCPU. The budgets are catalog
 // state on the instance config, are applied as the instance's actual
 // limits.memory / limits.cpu ceilings, and are proven by read-back.
-func createSandbox(instance string, requestedBudget int64, requestedCPU int64) (map[string]interface{}, error) {
+func createSandbox(instance string, requestedBudget int64, requestedCPU int64, timings lifecycleTimings) (map[string]interface{}, error) {
 	if !protocol.ValidSandboxInstance(instance) {
 		return nil, protoError("invalid_instance", "instance is not permitted")
 	}
@@ -681,7 +681,7 @@ func createSandbox(instance string, requestedBudget int64, requestedCPU int64) (
 				// instance with metadata but without guest provisioning.
 				// Re-run the launcher so initialization completes before
 				// the create is allowed to report success.
-				if err := runLauncher(instance, true); err != nil {
+				if err := runLauncherWithBudget(instance, true, 0, timings); err != nil {
 					return nil, err
 				}
 				if !sandboxInitialized(instance) {
@@ -695,7 +695,12 @@ func createSandbox(instance string, requestedBudget int64, requestedCPU int64) (
 			return result, err
 		}
 	}
-	if err := runLauncherWithBudget(instance, true, requestedBudget); err != nil {
+	// Inventory proved this name absent. A deleted incarnation may have
+	// left timing files if teardown was interrupted before cleanup.
+	if err := removeLifecycleObservations(lifecycleRoot(), 0, instance); err != nil {
+		return nil, protoError("operation_failed", "observations for the previous sandbox could not be cleared")
+	}
+	if err := runLauncherWithBudget(instance, true, requestedBudget, timings); err != nil {
 		return nil, err
 	}
 	budget := requestedBudget
