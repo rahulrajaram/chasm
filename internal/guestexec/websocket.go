@@ -100,6 +100,9 @@ func openWebsocket(ctx context.Context, dial socketDial, operation, secret strin
 }
 
 func (ws *websocket) write(opcode byte, payload []byte) error {
+	if len(payload) > 65535 {
+		return errors.New("Incus websocket payload exceeds 65535 bytes")
+	}
 	ws.mu.Lock()
 	defer ws.mu.Unlock()
 	var deadline time.Time

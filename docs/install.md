@@ -142,13 +142,19 @@ In order, one approval per step:
    limit, so it may pass even when the supervisor later fails to resolve
    the operator. Capability checks on an untested distro do not make it
    supported. Automatic Incus package installation remains Debian-only.
-   Incus socket discovery uses `INCUS_SOCKET`, then
-   `/var/lib/incus/unix.socket`, then `/run/incus/unix.socket`. An explicit
+   Incus socket discovery uses `INCUS_SOCKET`, then the root-owned
+   `/etc/chasm/incus-socket` setting, then `/var/lib/incus/unix.socket`,
+   then `/run/incus/unix.socket`. The socket and all parent directories must
+   be root-owned; parents may not be group- or world-writable. An explicit
    override must name an existing local Unix socket. Set `INCUS_SOCKET`
    during provisioning to persist that path in root-owned
    `/etc/chasm/incus-socket` (mode 0600); Chasm services and the narrow shell
    helper use this fixed setting without inheriting arbitrary caller
-   environment.
+   environment. A later `--provision` without an explicit override removes
+   the prior setting and selects a standard socket. With sudo `env_reset`, pass
+   overrides as `sudo INCUS_SOCKET=/path/to/socket install-chasm.sh --provision`
+   or `sudo CHASM_ALLOW_UNTESTED_HOST=1 install-chasm.sh --provision`;
+   variables set only in the invoking shell are dropped.
 2. **Incus install** (only with `--install-incus` and only if absent):
    `apt-get install incus virtiofsd` from the release's own repositories
    on Debian 13 (trixie) and newer; on Debian 12 (bookworm),

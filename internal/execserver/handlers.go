@@ -220,7 +220,15 @@ func incusQueryMetadata(path string, metadata interface{}) error {
 	}
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return (&net.Dialer{Timeout: 15 * time.Second}).DialContext(ctx, "unix", socketPath)
+			conn, err := (&net.Dialer{Timeout: 15 * time.Second}).DialContext(ctx, "unix", socketPath)
+			if err != nil {
+				return nil, err
+			}
+			if err := incuslocal.RootPeer(conn); err == nil {
+				return conn, nil
+			}
+			_ = conn.Close()
+			return nil, errors.New("Incus socket peer is not authenticated as root")
 		},
 	}
 	client := &http.Client{Transport: transport, Timeout: 20 * time.Second}
@@ -1411,21 +1419,26 @@ func managedUntypedDiskConfigValid(raw interface{}, pool, source, path string) b
 
 // Dispatch is the Go mirror of host_control dispatch().
 func Dispatch(request protocol.Request) (map[string]interface{}, error) {
+	return dispatchWithLifecycle(request, dispatch, requireManagedSandbox, saveLifecycleObservation, os.Stderr)
+}
+
+func dispatchWithLifecycle(request protocol.Request, execute Dispatcher, managed func(string) error,
+	save func(string, uint32, string, lifecycleObservation) error, log io.Writer) (map[string]interface{}, error) {
 	operation := lifecycleOperation(request.Operation)
 	if operation == "" {
-		return dispatch(request)
+		return execute(request)
 	}
 	if request.LifecycleTimings == nil {
 		request.LifecycleTimings = make(map[string]int64)
 	}
 	timings := lifecycleTimings(request.LifecycleTimings)
 	end := timings.phase("total")
-	result, err := dispatch(request)
+	result, err := execute(request)
 	end()
 	observation := lifecycleObservation{Operation: operation, RequestID: request.RequestID(), ObservedAt: time.Now().UTC(), OK: err == nil, Timings: timings}
-	if protocol.ValidSandboxInstance(request.Instance()) {
-		if saveErr := saveLifecycleObservation(lifecycleRoot(), 0, request.Instance(), observation); saveErr != nil {
-			return nil, protoError("operation_failed", "lifecycle timing could not be stored; the operation may have taken effect")
+	if protocol.ValidSandboxInstance(request.Instance()) && managed(request.Instance()) == nil {
+		if saveErr := save(lifecycleRoot(), 0, request.Instance(), observation); saveErr != nil {
+			fmt.Fprintf(log, "chasm executor: lifecycle timing persistence failed for %s: %v\n", request.Instance(), saveErr)
 		}
 	}
 	return result, err

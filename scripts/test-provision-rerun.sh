@@ -1002,6 +1002,9 @@ p_note() { printf 'note  %s\n' "$*"; }
 p_fail() { printf 'FAIL  %s\n' "$*"; PREFLIGHT_FAILURES=$((PREFLIGHT_FAILURES + 1)); }
 fail() { printf 'FAIL  %s\n' "$*" >&2; exit 1; }
 approve() { printf 'approve: %s\n' "$*"; }
+template_instance_for_profile() { [ "${TEST_SEALED:-0}" = 1 ] && printf 'sandbox-template-test\n'; }
+template_sealed() { [ "${TEST_SEALED:-0}" = 1 ]; }
+SITE_BOOTSTRAP_PROFILE=test
 EOF
 cat >"$WORK/bin/apt-get" <<'EOF'
 #!/bin/sh
@@ -1157,6 +1160,12 @@ mv "$WORK/incus-boundary-bin/incus-agent" "$WORK/incus-boundary-bin/virtiofsd"
 out=$(run_incus_boundary "$ROOT/plugins/install-incus/incus-install.sh" 2>&1)
 assert_contains "$out" "FAIL  Incus host agent is missing" "T6 missing Incus agent refusal"
 assert_contains "$out" "boundary failures=1 needed=0" "T6 Incus agent counter"
+TEST_SEALED=1
+export TEST_SEALED
+out=$(run_incus_boundary "$ROOT/plugins/install-incus/incus-install.sh" 2>&1)
+assert_contains "$out" "WARNING: Incus host agent is missing" "T6 existing sealed template warning"
+assert_contains "$out" "boundary failures=0 needed=0" "T6 existing sealed template allowed"
+unset TEST_SEALED
 rm -f "$WORK/incus-boundary-bin/incus"
 
 sed -n '/^go_version_at_least() {/,/^}/p' "$INSTALLER" >"$WORK/portability-go.sh"

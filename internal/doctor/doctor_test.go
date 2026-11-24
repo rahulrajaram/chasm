@@ -1,6 +1,7 @@
 package doctor
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -12,6 +13,14 @@ import (
 
 	"github.com/rahulrajaram/chasm/internal/siteconfig"
 )
+
+func TestDoctorRootCommandOutputIsBounded(t *testing.T) {
+	var output boundedDoctorOutput
+	payload := bytes.Repeat([]byte("x"), 128<<10)
+	if n, err := output.Write(payload); err != nil || n != len(payload) || output.Len() != 64<<10 {
+		t.Fatalf("captured %d bytes, write %d, error %v", output.Len(), n, err)
+	}
+}
 
 type fakeInfo struct {
 	mode os.FileMode

@@ -194,7 +194,7 @@ func execThroughHelper(ctx context.Context, command *exec.Cmd, request guestexec
 				return
 			}
 			if err != nil {
-				if err != io.EOF || writer.WriteFrame(guestexec.InputEndFrame, nil) != nil {
+				if writer.WriteFrame(guestexec.InputEndFrame, nil) != nil {
 					_ = input.Close()
 				}
 				// Keep the pipe open. EOF of guest stdin is not a disconnect.
@@ -279,33 +279,25 @@ func readExecOutput(output io.Reader, input io.Closer, stdout, stderr io.Writer)
 		}
 		if writeErr == nil {
 			writeErr = writeExecOutput(stream, payload)
-			if writeErr != nil {
+			if execOutputHangup(writeErr) {
 				_ = input.Close()
 			}
 		}
 	}
 }
 
-// An inherited output descriptor can be blocking and cannot safely be put
-// in nonblocking mode by Chasm. Bound public output backpressure separately
-// from the privileged helper and stop delivering after the first failure.
+func execOutputHangup(err error) bool {
+	return errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, os.ErrClosed) || errors.Is(err, io.ErrClosedPipe)
+}
+
+// A slow consumer is not a disconnect. The caller owns output backpressure.
 func writeExecOutput(stream io.Writer, payload []byte) error {
-	completed := make(chan error, 1)
-	go func() {
-		n, err := stream.Write(payload)
-		if err == nil && n != len(payload) {
-			err = io.ErrShortWrite
-		}
-		completed <- err
-	}()
-	timer := time.NewTimer(5 * time.Second)
-	defer timer.Stop()
-	select {
-	case err := <-completed:
-		return err
-	case <-timer.C:
-		return errors.New("exec output descriptor stopped accepting data")
+	n, err := stream.Write(payload)
+	if err == nil && n != len(payload) {
+		return io.ErrShortWrite
 	}
+	return err
 }
 
 func validExecResult(result guestexec.Result) bool {
@@ -355,6 +347,10 @@ func newExecAudit(operator, guest int, request guestexec.Request) execAudit {
 
 const maxConcurrentExecs = 8
 
+var appendExecAudit = execserver.AppendGuestExecAudit
+var executeGuestExec = dispatchExec
+var execSlotDirectory = "/run/chasm-exec"
+
 func acquireExecSlot(dir string) (*os.File, error) {
 	if err := os.Mkdir(dir, 0700); err != nil && !errors.Is(err, os.ErrExist) {
 		return nil, err
@@ -392,14 +388,7 @@ func runPrivilegedExec(arguments []string, effectiveUID int, getenv func(string)
 			return 1
 		}
 	}
-	// Use a pollable descriptor so an unresponsive caller cannot stall root
-	// indefinitely while the remote command is still running.
-	fd := stdout.Fd()
-	if err := syscall.SetNonblock(int(fd), true); err != nil {
-		return 1
-	}
-	stdout = os.NewFile(fd, "exec-protocol-output")
-	writer := &guestexec.FrameWriter{Writer: stdout, WriteTimeout: 5 * time.Second}
+	writer := &guestexec.FrameWriter{Writer: stdout}
 	reply := func(result guestexec.Result) int {
 		if writer.WriteJSON(guestexec.ResultFrame, result) != nil {
 			return 1
@@ -448,20 +437,25 @@ func runPrivilegedExec(arguments []string, effectiveUID int, getenv func(string)
 		return reply(guestexec.Rejected("setup_failed"))
 	}
 	requestID := hex.EncodeToString(nonce[:])
+	slot, err := acquireExecSlot(execSlotDirectory)
+	if err != nil {
+		return reply(guestexec.Rejected("busy"))
+	}
+	defer slot.Close()
 	audit.Result = guestexec.Result{Version: 1, RequestID: requestID, Disposition: "accepted"}
-	if execserver.AppendGuestExecAudit(audit) != nil {
+	if appendExecAudit(audit) != nil {
 		return reply(guestexec.Rejected("audit_failed"))
 	}
 	if writer.WriteFrame(guestexec.AcceptedFrame, []byte(requestID)) != nil {
 		audit.At = time.Now().UTC()
 		audit.Result = guestexec.Rejected("client_disconnected")
 		audit.RequestID = requestID
-		_ = execserver.AppendGuestExecAudit(audit)
+		_ = appendExecAudit(audit)
 		return 1
 	}
 	input := make(chan []byte, 2)
 	go receiveExecInput(ctx, cancel, stdin, input)
-	result := dispatchExec(ctx, managedInstanceName(name), request, guest, input, writer)
+	result := executeGuestExec(ctx, managedInstanceName(name), request, guest, input, writer)
 	result.RequestID = requestID
 	if result.Timings == nil {
 		result.Timings = make(map[string]int64)
@@ -470,7 +464,7 @@ func runPrivilegedExec(arguments []string, effectiveUID int, getenv func(string)
 	result.Timings["total"] = time.Since(started).Milliseconds()
 	audit.At = time.Now().UTC()
 	audit.Result = result
-	if execserver.AppendGuestExecAudit(audit) != nil {
+	if appendExecAudit(audit) != nil {
 		result = guestexec.Unknown("audit_failed")
 		result.RequestID = requestID
 	}
@@ -482,31 +476,17 @@ func dispatchExec(ctx context.Context, instance string, request guestexec.Reques
 		return guestexec.Rejected("client_disconnected")
 	}
 	setupStarted := time.Now()
-	slot, err := acquireExecSlot("/run/chasm-exec")
-	if err != nil {
-		return guestexec.Rejected("busy")
-	}
-	defer slot.Close()
 	endpoint, err := incuslocal.ConfiguredSocketPath()
 	if err != nil {
 		return guestexec.Rejected("incus_unavailable")
 	}
 	client := guestexec.NewClient(endpoint)
 	metadata, err := client.Instance(ctx, instance)
-	if err != nil {
+	if code := execTargetError(instance, metadata, err); code != "" {
 		if ctx.Err() != nil {
 			return guestexec.Rejected("client_disconnected")
 		}
-		if errors.Is(err, guestexec.ErrInstanceNotFound) {
-			return guestexec.Rejected("target_missing")
-		}
-		return guestexec.Rejected("incus_unavailable")
-	}
-	if metadata["type"] != "virtual-machine" || metadata["name"] != instance || execserver.ValidateManagedSandboxMetadata(instance, metadata) != nil {
-		return guestexec.Rejected("target_unmanaged")
-	}
-	if metadata["status"] != "Running" && metadata["status"] != "Ready" {
-		return guestexec.Rejected("target_not_running")
+		return guestexec.Rejected(code)
 	}
 	if ctx.Err() != nil {
 		return guestexec.Rejected("client_disconnected")
@@ -518,6 +498,22 @@ func dispatchExec(ctx context.Context, instance string, request guestexec.Reques
 	}
 	result.Timings["target_resolution"] = setup
 	return result
+}
+
+func execTargetError(instance string, metadata map[string]any, err error) string {
+	if errors.Is(err, guestexec.ErrInstanceNotFound) {
+		return "target_missing"
+	}
+	if err != nil {
+		return "incus_unavailable"
+	}
+	if metadata["type"] != "virtual-machine" || metadata["name"] != instance || execserver.ValidateManagedSandboxMetadata(instance, metadata) != nil {
+		return "target_unmanaged"
+	}
+	if metadata["status"] != "Running" && metadata["status"] != "Ready" {
+		return "target_not_running"
+	}
+	return ""
 }
 
 func receiveExecInput(ctx context.Context, cancel context.CancelFunc, stdin io.Reader, input chan []byte) {

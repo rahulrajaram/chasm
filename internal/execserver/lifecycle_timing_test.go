@@ -1,7 +1,9 @@
 package execserver
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +13,48 @@ import (
 
 	"github.com/rahulrajaram/chasm/internal/protocol"
 )
+
+func TestLifecycleTimingPersistencePreservesOperationOutcome(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		managed  bool
+		opErr    error
+		wantSave bool
+	}{
+		{"successful managed", true, nil, true},
+		{"failed managed", true, errors.New("original failure"), true},
+		{"missing instance", false, errors.New("not found"), false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := protocol.Request{Operation: "ensure_guest_running", Fields: map[string]interface{}{"instance": "sandbox-missing", "request_id": "timing"}}
+			calls := 0
+			var log bytes.Buffer
+			result, err := dispatchWithLifecycle(request,
+				func(protocol.Request) (map[string]interface{}, error) {
+					return map[string]interface{}{"applied": true}, test.opErr
+				},
+				func(string) error {
+					if test.managed {
+						return nil
+					}
+					return errors.New("not managed")
+				},
+				func(string, uint32, string, lifecycleObservation) error {
+					calls++
+					return errors.New("disk unavailable")
+				}, &log)
+			if err != test.opErr || result["applied"] != true {
+				t.Fatalf("operation result changed: %v, %v", result, err)
+			}
+			if (calls == 1) != test.wantSave {
+				t.Fatalf("observation calls = %d", calls)
+			}
+			if (log.Len() > 0) != test.wantSave {
+				t.Fatalf("persistence error log = %q", log.String())
+			}
+		})
+	}
+}
 
 func TestLifecycleLauncherUsesOnlyPrivateCompletedPhaseMarkers(t *testing.T) {
 	command := exec.Command("/bin/sh", "-c", `

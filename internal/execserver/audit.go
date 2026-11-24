@@ -12,6 +12,8 @@ import (
 	"github.com/rahulrajaram/chasm/internal/protocol"
 )
 
+const maxGuestExecAuditBytes = 64 << 20
+
 // jsonlAudit returns an AuditFunc mirroring _append_audit: every request
 // disposition is appended to a root-owned 0600 JSONL file under a
 // root-owned 0700 directory, schema (at / peer_uid / request_id /
@@ -74,9 +76,20 @@ func appendAuditRecord(dir, file string, expectedUID uint32, encoded []byte) err
 	if err != nil {
 		return fmt.Errorf("open audit file: %w", err)
 	}
-	if info, err := descriptor.Stat(); err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || !ownedBy(info, expectedUID) {
+	if file == "exec-audit.jsonl" {
+		if err := syscall.Flock(int(descriptor.Fd()), syscall.LOCK_EX); err != nil {
+			_ = descriptor.Close()
+			return fmt.Errorf("lock exec audit file: %w", err)
+		}
+	}
+	info, err := descriptor.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || !ownedBy(info, expectedUID) {
 		_ = descriptor.Close()
 		return fmt.Errorf("audit file metadata is unsafe")
+	}
+	if file == "exec-audit.jsonl" && info.Size() > maxGuestExecAuditBytes-int64(len(encoded)) {
+		_ = descriptor.Close()
+		return fmt.Errorf("exec audit file reached its 64 MiB cap")
 	}
 	written, writeErr := descriptor.Write(encoded)
 	if writeErr != nil || written != len(encoded) {

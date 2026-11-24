@@ -2,13 +2,13 @@
 package doctor
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"os/user"
-	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -83,8 +83,10 @@ func Collect(site siteconfig.Site) []Check {
 				return err
 			}
 			cmd.WaitDelay = time.Second
-			output, err := cmd.CombinedOutput()
-			return strings.TrimSpace(string(output)), err
+			var output boundedDoctorOutput
+			cmd.Stdout, cmd.Stderr = &output, &output
+			err := cmd.Run()
+			return strings.TrimSpace(output.String()), err
 		},
 		observe: func(socket, path string) (map[string]any, error) {
 			return guestexec.NewClient(socket).Observe(context.Background(), path)
@@ -388,25 +390,22 @@ func checkIncus(site siteconfig.Site, socket string, p probes, add addCheck) {
 // authenticate SO_PEERCRED itself. Keep its endpoint out of paths an
 // unprivileged user could swap after the native reachability check.
 func trustedSocketPath(socket string, lstat func(string) (os.FileInfo, error)) bool {
-	info, err := lstat(socket)
-	if err != nil || info.Mode()&os.ModeSocket == 0 {
-		return false
+	return incuslocal.TrustedSocketPath(socket, lstat)
+}
+
+type boundedDoctorOutput struct{ bytes.Buffer }
+
+func (output *boundedDoctorOutput) Write(payload []byte) (int, error) {
+	const limit = 64 << 10
+	remaining := limit - output.Len()
+	if remaining <= 0 {
+		return len(payload), nil
 	}
-	if owner, ok := info.Sys().(*syscall.Stat_t); !ok || owner.Uid != 0 {
-		return false
+	if len(payload) > remaining {
+		_, _ = output.Buffer.Write(payload[:remaining])
+		return len(payload), nil
 	}
-	for dir := filepath.Dir(socket); ; dir = filepath.Dir(dir) {
-		info, err := lstat(dir)
-		if err != nil || !info.Mode().IsDir() || info.Mode().Perm()&0022 != 0 {
-			return false
-		}
-		if owner, ok := info.Sys().(*syscall.Stat_t); !ok || owner.Uid != 0 {
-			return false
-		}
-		if dir == "/" {
-			return true
-		}
-	}
+	return output.Buffer.Write(payload)
 }
 
 func staleTemplateEvidence(output string) bool {

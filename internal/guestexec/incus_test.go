@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -25,6 +26,8 @@ type fakeIncus struct {
 	command          chan execPost
 	stdin            chan []byte
 	opened           chan byte
+	handshakes       chan struct{}
+	dropRelease      chan struct{}
 	signals          chan int
 	finish           chan struct{}
 	exit             int
@@ -37,6 +40,7 @@ type fakeIncus struct {
 func newFakeIncus(t *testing.T) *fakeIncus {
 	return &fakeIncus{
 		t: t, command: make(chan execPost, 1), stdin: make(chan []byte, 1), opened: make(chan byte, 4),
+		handshakes: make(chan struct{}, 4), dropRelease: make(chan struct{}),
 		signals: make(chan int, 3), finish: make(chan struct{}),
 	}
 }
@@ -49,7 +53,20 @@ func (fake *fakeIncus) dial(ctx context.Context) (net.Conn, error) {
 	}
 	client, server := net.Pipe()
 	go fake.serve(server)
-	return client, nil
+	return &handshakeConn{Conn: client, handshakes: fake.handshakes}, nil
+}
+
+type handshakeConn struct {
+	net.Conn
+	handshakes chan<- struct{}
+}
+
+func (conn *handshakeConn) SetDeadline(deadline time.Time) error {
+	err := conn.Conn.SetDeadline(deadline)
+	if err == nil && deadline.IsZero() {
+		conn.handshakes <- struct{}{}
+	}
+	return err
 }
 
 func writeTestJSON(conn net.Conn, status string, body any) {
@@ -155,6 +172,7 @@ func (fake *fakeIncus) socket(conn net.Conn, reader io.Reader, channel byte) {
 			return
 		}
 		if fake.dropOutput {
+			<-fake.dropRelease
 			return
 		}
 		if channel == 'c' {
@@ -287,11 +305,34 @@ func TestNativeExecDoesNotTrustSuccessWithoutOutputBarrier(t *testing.T) {
 	fake := newFakeIncus(t)
 	fake.dropOutput = true
 	fake.terminate()
+	go func() {
+		for range 4 {
+			<-fake.handshakes
+		}
+		close(fake.dropRelease)
+	}()
 	input := make(chan []byte)
 	close(input)
 	result := newClient(fake.dial).Execute(context.Background(), "sandbox-test", Request{Argv: []string{"app"}, Cwd: "/"}, 3456, input, func(byte, []byte) error { return nil })
-	if result.GuestStatus == nil || *result.GuestStatus != 0 || result.OutputCode != "output_incomplete" {
+	if result.GuestStatus == nil || *result.GuestStatus != 0 || result.OutputCode != "output_incomplete" || result.ExitCode() != 125 {
 		t.Fatalf("guest status and output integrity were not separated: %+v", result)
+	}
+}
+
+func TestNativeExecOutputErrorDoesNotCancelGuestUnlessPeerClosed(t *testing.T) {
+	fake := newFakeIncus(t)
+	fake.terminate()
+	input := make(chan []byte)
+	close(input)
+	result := newClient(fake.dial).Execute(context.Background(), "sandbox-test", Request{Argv: []string{"app"}, Cwd: "/"}, 3456, input,
+		func(byte, []byte) error { return errors.New("output disk full") })
+	if result.GuestStatus == nil || *result.GuestStatus != 0 || result.OutputCode != "output_incomplete" || result.Disposition != "completed" || result.ExitCode() != 125 {
+		t.Fatalf("output error changed guest completion: %+v", result)
+	}
+	select {
+	case signal := <-fake.signals:
+		t.Fatalf("output error sent guest signal %d", signal)
+	default:
 	}
 }
 

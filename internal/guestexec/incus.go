@@ -8,9 +8,12 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"regexp"
 	"syscall"
 	"time"
+
+	"github.com/rahulrajaram/chasm/internal/incuslocal"
 )
 
 const (
@@ -32,16 +35,8 @@ func NewClient(socket string) *Client {
 		if err != nil {
 			return nil, err
 		}
-		raw, err := conn.(*net.UnixConn).SyscallConn()
-		if err == nil {
-			var credentials *syscall.Ucred
-			var credentialErr error
-			err = raw.Control(func(fd uintptr) {
-				credentials, credentialErr = syscall.GetsockoptUcred(int(fd), syscall.SOL_SOCKET, syscall.SO_PEERCRED)
-			})
-			if err == nil && credentialErr == nil && credentials != nil && credentials.Uid == 0 {
-				return conn, nil
-			}
+		if err := incuslocal.RootPeer(conn); err == nil {
+			return conn, nil
 		}
 		_ = conn.Close()
 		return nil, errors.New("Incus socket peer is not authenticated as root")
@@ -270,29 +265,34 @@ func (client *Client) stream(ctx context.Context, id string, sockets []*websocke
 		}
 	}()
 	type outputResult struct {
-		err   error
-		first int64
-		kind  byte
+		err      error
+		writeErr error
+		first    int64
+		kind     byte
 	}
 	outDone := make(chan outputResult, 2)
-	publicOutputLost := make(chan struct{}, 2)
+	publicOutputLost := make(chan error, 2)
 	receive := func(ws *websocket, kind byte) {
 		first := int64(-1)
 		writing := true
+		var writeErr error
 		err := ws.receive(func(payload []byte) error {
 			if first < 0 && len(payload) != 0 {
 				first = time.Since(ready).Milliseconds()
 			}
-			if writing && output(kind, payload) != nil {
+			if writing {
+				writeErr = output(kind, payload)
+			}
+			if writing && writeErr != nil {
 				writing = false
-				publicOutputLost <- struct{}{}
+				publicOutputLost <- writeErr
 			}
 			return nil
 		})
 		if !writing && err == nil {
-			err = errors.New("exec output could not be delivered")
+			err = writeErr
 		}
-		outDone <- outputResult{err: err, first: first, kind: kind}
+		outDone <- outputResult{err: err, writeErr: writeErr, first: first, kind: kind}
 	}
 	go receive(stdout, StdoutFrame)
 	go receive(stderr, StderrFrame)
@@ -358,9 +358,11 @@ func (client *Client) stream(ctx context.Context, id string, sockets []*websocke
 			// Incus closes control before recording ordinary completion.
 			controlDone = nil
 			awaitCompletion()
-		case <-publicOutputLost:
+		case err := <-publicOutputLost:
 			outputLost = true
-			beginCancel("incus_output_lost")
+			if outputPeerClosed(err) {
+				beginCancel("client_disconnected")
+			}
 		case <-completionDeadline:
 			completionDeadline = nil
 			if cancelReason == "" {
@@ -382,7 +384,9 @@ func (client *Client) stream(ctx context.Context, id string, sockets []*websocke
 			}
 			if stream.err != nil {
 				outputLost = true
-				beginCancel("incus_output_lost")
+				if outputPeerClosed(stream.err) || stream.writeErr == nil || !errors.Is(stream.err, stream.writeErr) {
+					beginCancel("incus_output_lost")
+				}
 			}
 		case err := <-inDone:
 			inDone = nil
@@ -431,4 +435,9 @@ func (client *Client) stream(ctx context.Context, id string, sockets []*websocke
 	timings["total"] = time.Since(started).Milliseconds()
 	result.Timings = timings
 	return result
+}
+
+func outputPeerClosed(err error) bool {
+	return errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, net.ErrClosed) || errors.Is(err, os.ErrClosed) || errors.Is(err, io.ErrClosedPipe)
 }

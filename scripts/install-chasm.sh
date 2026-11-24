@@ -614,9 +614,9 @@ virtiofsd_probe() {
 }
 
 incus_socket_probe() {
-	if [ -n "${INCUS_SOCKET:-}" ]; then
+	if [ "${INCUS_SOCKET_EXPLICIT:-0}" -eq 1 ] && [ -n "${INCUS_SOCKET:-}" ]; then
 		incus_socket_candidate=$INCUS_SOCKET
-	elif [ -e /etc/chasm/incus-socket ] || [ -L /etc/chasm/incus-socket ]; then
+	elif [ "${install_mode:-}" != --provision ] && { [ -e /etc/chasm/incus-socket ] || [ -L /etc/chasm/incus-socket ]; }; then
 		[ -f /etc/chasm/incus-socket ] && [ ! -L /etc/chasm/incus-socket ] &&
 			[ "$(stat -c '%U:%G:%a' /etc/chasm/incus-socket 2>/dev/null || true)" = root:root:600 ] &&
 			[ "$(wc -l </etc/chasm/incus-socket)" -eq 1 ] &&
@@ -632,6 +632,19 @@ incus_socket_probe() {
 	case "$incus_socket_candidate" in *[!A-Za-z0-9_./-]*|'') return 1 ;; esac
 	case "$incus_socket_candidate" in *//*|*/./*|*/../*|*/.|*/..|*/) return 1 ;; esac
 	[ "${#incus_socket_candidate}" -le 107 ] && [ ! -L "$incus_socket_candidate" ] && [ -S "$incus_socket_candidate" ] || return 1
+	incus_socket_parent=${incus_socket_candidate%/*}
+	[ -n "$incus_socket_parent" ] || incus_socket_parent=/
+	[ "$(stat -c %u "$incus_socket_candidate" 2>/dev/null)" = 0 ] || return 1
+	while :; do
+		[ -d "$incus_socket_parent" ] && [ ! -L "$incus_socket_parent" ] || return 1
+		incus_socket_meta=$(stat -c '%u:%a' "$incus_socket_parent" 2>/dev/null) || return 1
+		case "$incus_socket_meta" in 0:*) ;; *) return 1 ;; esac
+		incus_socket_mode=${incus_socket_meta#*:}
+		[ "$((0$incus_socket_mode & 022))" -eq 0 ] || return 1
+		[ "$incus_socket_parent" = / ] && break
+		incus_socket_parent=${incus_socket_parent%/*}
+		[ -n "$incus_socket_parent" ] || incus_socket_parent=/
+	done
 	printf '%s\n' "$incus_socket_candidate"
 }
 
@@ -698,7 +711,13 @@ incus_preflight_check() {
         if incus_agent_probe; then
             p_ok "Incus host agent present: $incus_agent_path"
         else
-            p_fail "Incus host agent is missing (install the incus-agent package from your Incus distribution; template VM readiness depends on it)"
+            agent_remedy="Incus host agent is missing (install the incus-agent package from your Incus distribution; template VM readiness depends on it)"
+            template_instance=$(template_instance_for_profile "$SITE_BOOTSTRAP_PROFILE") || true
+            if [ -n "$template_instance" ] && template_sealed "$template_instance"; then
+                p_note "WARNING: $agent_remedy; existing sealed template is available"
+            else
+                p_fail "$agent_remedy"
+            fi
         fi
     else
         INCUS_INSTALL_NEEDED=1
@@ -1029,6 +1048,8 @@ install_payload() {
         incus_socket_probe >/dev/null || fail "INCUS_SOCKET must be an absolute path to an existing local Unix socket"
         printf '%s\n' "$INCUS_SOCKET" >"$staging/incus-socket"
         install -o root -g root -m 0600 "$staging/incus-socket" /etc/chasm/incus-socket
+    else
+        rm -f /etc/chasm/incus-socket
     fi
     install_go_payload "$staging"
 

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -105,6 +106,48 @@ func TestJSONLAuditAppendsPrivateOwnedRecords(t *testing.T) {
 	}
 	assertOwnedMode(t, dir, uint32(os.Geteuid()), 0o700)
 	assertOwnedMode(t, filepath.Join(dir, "audit.jsonl"), uint32(os.Geteuid()), 0o600)
+}
+
+func TestGuestExecAuditHasSizeCap(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "audit")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "exec-audit.jsonl")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(maxGuestExecAuditBytes); err != nil {
+		t.Fatal(err)
+	}
+	_ = file.Close()
+	if err := appendAuditRecord(dir, "exec-audit.jsonl", uint32(os.Geteuid()), []byte("{}\n")); err == nil {
+		t.Fatal("exec audit exceeded size cap")
+	}
+	if err := os.Truncate(path, maxGuestExecAuditBytes-1); err != nil {
+		t.Fatal(err)
+	}
+	var group sync.WaitGroup
+	results := make(chan error, 2)
+	for range 2 {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			results <- appendAuditRecord(dir, "exec-audit.jsonl", uint32(os.Geteuid()), []byte("x"))
+		}()
+	}
+	group.Wait()
+	close(results)
+	succeeded := 0
+	for err := range results {
+		if err == nil {
+			succeeded++
+		}
+	}
+	if succeeded != 1 {
+		t.Fatalf("accepted %d concurrent writes at the cap", succeeded)
+	}
 }
 
 func TestJSONLAuditRefusesUnexpectedOwnerAndMode(t *testing.T) {

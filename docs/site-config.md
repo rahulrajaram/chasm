@@ -53,10 +53,16 @@ a profile default alone leaves explicit instance settings in effect.
 
 Chasm manages the local Incus daemon through the standard
 `/var/lib/incus/unix.socket` in the default project. It also checks
-`/run/incus/unix.socket` for distributions that place the local socket there;
-an explicit `INCUS_SOCKET` takes precedence and must name an existing local
-Unix socket. Provisioning can persist an explicit path in the root-owned
-`/etc/chasm/incus-socket`. Changing the resource prefix affects object
+`/run/incus/unix.socket` for distributions that place the local socket there.
+Resolution precedence is `INCUS_SOCKET`, the root-owned
+`/etc/chasm/incus-socket` setting, `/var/lib/incus/unix.socket`, then
+`/run/incus/unix.socket`. The socket and its parent chain must be root-owned;
+parents cannot be group- or world-writable. Provisioning persists an explicit
+path in `/etc/chasm/incus-socket` and removes that setting on a later provision
+without an override. With sudo `env_reset`, pass overrides as
+`sudo INCUS_SOCKET=/path/to/socket install-chasm.sh --provision` or
+`sudo CHASM_ALLOW_UNTESTED_HOST=1 install-chasm.sh --provision`; an ordinary
+export is dropped. Changing the resource prefix affects object
 ownership and naming. Each deployment still needs
 its own control services, state and firewall if it is to function as an
 independent site.

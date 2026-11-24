@@ -10,7 +10,6 @@ import (
 	"regexp"
 	"strings"
 	"sync"
-	"time"
 	"unicode/utf8"
 )
 
@@ -94,6 +93,9 @@ func Unknown(code string) Result {
 
 func (result Result) ExitCode() int {
 	if result.GuestStatus != nil {
+		if *result.GuestStatus == 0 && result.OutputCode != "" {
+			return 125
+		}
 		return *result.GuestStatus
 	}
 	if result.Disposition == "outcome_unknown" {
@@ -139,9 +141,9 @@ func ReadFrame(reader io.Reader) (byte, []byte, error) {
 }
 
 type FrameWriter struct {
-	Writer       io.Writer
-	WriteTimeout time.Duration
-	mu           sync.Mutex
+	Writer io.Writer
+	mu     sync.Mutex
+	closed bool
 }
 
 func (writer *FrameWriter) WriteFrame(kind byte, payload []byte) error {
@@ -153,8 +155,8 @@ func (writer *FrameWriter) WriteFrame(kind byte, payload []byte) error {
 	binary.BigEndian.PutUint32(header[1:], uint32(len(payload)))
 	writer.mu.Lock()
 	defer writer.mu.Unlock()
-	if deadlineWriter, ok := writer.Writer.(interface{ SetWriteDeadline(time.Time) error }); ok && writer.WriteTimeout > 0 {
-		_ = deadlineWriter.SetWriteDeadline(time.Now().Add(writer.WriteTimeout))
+	if writer.closed {
+		return errors.New("exec output stream is closed")
 	}
 	if n, err := writer.Writer.Write(header[:]); err != nil {
 		return err
@@ -164,6 +166,9 @@ func (writer *FrameWriter) WriteFrame(kind byte, payload []byte) error {
 	n, err := writer.Writer.Write(payload)
 	if err == nil && n != len(payload) {
 		return io.ErrShortWrite
+	}
+	if err == nil && kind == ResultFrame {
+		writer.closed = true
 	}
 	return err
 }

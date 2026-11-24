@@ -240,7 +240,9 @@ primary guest command. Detached descendants are outside that guarantee.
 
 Chasm admits eight foreground execs per site. Requests can carry up to
 256 argv entries and 64 environment variables, with a 16 KiB limit per
-argument or value and a 64 KiB encoded request limit.
+argument or value and a 64 KiB encoded request limit. The root-owned
+`exec-audit.jsonl` file is capped at 64 MiB; once full, admission fails
+closed until an administrator archives and clears it.
 
 The optional status descriptor must be writable, inherited, and numbered
 3 or higher. It receives one JSON line with `version`, `disposition`, and
@@ -251,7 +253,10 @@ signal written to the Incus control channel. It does not confirm which
 signal caused exit. Incus can synthesize return code 129 on VM disconnect.
 Chasm reports `outcome_unknown` and retains that code as `incus_return`.
 An `output_code` of `output_incomplete` means output could not be fully
-delivered. A confirmed guest exit still determines the CLI process status.
+delivered. If the guest exited 0, the CLI exits 125 so truncated output is
+never reported as process success; `guest_status` still records 0. Other
+confirmed guest statuses pass through. Slow output consumers block delivery
+without cancelling the guest; a closed output pipe triggers cleanup.
 See [Drive a sandbox from an agent](agent-workflow.md) for a complete
 automation example.
 
@@ -317,7 +322,10 @@ validating arguments, so a missing configuration can produce status 1 first.
 The interactive shell delegates to the guest shell through sudo and Incus, and
 its exit status reflects the delegated process.
 
-`chasm exec` preserves a confirmed guest exit code. Its own codes 124
+`chasm exec` preserves a confirmed nonzero guest exit code and an exit 0 when
+output was fully delivered. A completed guest exit 0 with incomplete output
+returns reserved code 125; `--status-fd` still reports `guest_status: 0`.
+Its own codes 124
 (completion unknown), 125 (rejected), and 126 (local setup failure) can
 coincide with guest exit codes. Use `--status-fd` for certainty. A usage
 error returns 2 before status delivery. Treat an absent status frame as
