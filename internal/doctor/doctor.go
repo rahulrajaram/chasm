@@ -45,6 +45,32 @@ const (
 	templateFix = "Run sudo " + provision + "/scripts/build-sandbox-template.sh after reviewing the template prerequisites."
 )
 
+// Keep this candidate order aligned with incus_agent_probe in scripts/install-chasm.sh.
+// INCUS_AGENT_PATH is omitted because chasm __doctor runs under sudo with a fixed
+// environment that does not pass that variable to the root helper.
+func incusAgentCandidates(goarch string) []string {
+	candidates := []string{
+		"/usr/local/sbin/incus-agent", "/usr/local/bin/incus-agent",
+		"/usr/sbin/incus-agent", "/usr/bin/incus-agent", "/sbin/incus-agent", "/bin/incus-agent",
+		"/usr/libexec/incus/incus-agent", "/usr/lib/incus/incus-agent", "/usr/libexec/incus-agent",
+	}
+	var arch string
+	switch goarch {
+	case "amd64":
+		arch = "x86_64"
+	case "arm64":
+		arch = "aarch64"
+	}
+	if arch != "" {
+		candidates = append(candidates,
+			"/usr/lib/incus/agents/incus-agent.linux."+arch,
+			"/usr/libexec/incus/agents/incus-agent.linux."+arch,
+			"/usr/share/incus/agents/incus-agent.linux."+arch,
+		)
+	}
+	return candidates
+}
+
 type probes struct {
 	read    func(string) ([]byte, error)
 	stat    func(string) (os.FileInfo, error)
@@ -142,13 +168,17 @@ func collect(site siteconfig.Site, p probes) []Check {
 		extra      []string
 	}{
 		{"virtiofsd", "Install the distro's virtiofsd package.", []string{"/usr/libexec/virtiofsd", "/usr/lib/virtiofsd", "/usr/lib/qemu/virtiofsd"}},
-		{"incus-agent", agentFix, []string{"/usr/libexec/incus/incus-agent", "/usr/lib/incus/incus-agent", "/usr/libexec/incus-agent"}},
+		{"incus-agent", agentFix, incusAgentCandidates(runtime.GOARCH)},
 	} {
 		var candidates []string
-		for _, dir := range strings.Split(fixedPath, ":") {
-			candidates = append(candidates, dir+"/"+component.id)
+		if component.id == "incus-agent" {
+			candidates = append(candidates, component.extra...)
+		} else {
+			for _, dir := range strings.Split(fixedPath, ":") {
+				candidates = append(candidates, dir+"/"+component.id)
+			}
+			candidates = append(candidates, component.extra...)
 		}
-		candidates = append(candidates, component.extra...)
 		path := ""
 		for _, candidate := range candidates {
 			if info, err := p.stat(candidate); err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0111 != 0 {

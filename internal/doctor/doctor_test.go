@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -211,6 +212,38 @@ func TestDoctorObservesOnlyRunningServiceAndManagedSandbox(t *testing.T) {
 	if len(*calls) != 3 {
 		t.Fatalf("unsafe VM readiness probed: %v", *calls)
 	}
+}
+
+func TestDoctorFindsArchitectureSpecificIncusAgent(t *testing.T) {
+	site, p, _ := diagnosticFixture(t)
+	arch := "x86_64"
+	if runtime.GOARCH == "arm64" {
+		arch = "aarch64"
+	}
+	target := "/usr/lib/incus/agents/incus-agent.linux." + arch
+	var searched []string
+	stat := p.stat
+	p.stat = func(path string) (os.FileInfo, error) {
+		searched = append(searched, path)
+		if path == target {
+			return fakeInfo{mode: 0755}, nil
+		}
+		if path == "/usr/lib/incus/incus-agent" {
+			return nil, os.ErrNotExist
+		}
+		return stat(path)
+	}
+	checks := collect(site, p)
+	for _, path := range searched {
+		if path == target {
+			for _, check := range checks {
+				if check.ID == "incus-agent" && check.Status == "ok" && check.Summary == target {
+					return
+				}
+			}
+		}
+	}
+	t.Fatalf("doctor did not find architecture-specific Incus agent %q; searched %v", target, searched)
 }
 
 func TestDoctorSkipsIncusWithoutActiveDaemonOrHostPin(t *testing.T) {
