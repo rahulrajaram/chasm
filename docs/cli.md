@@ -1,3 +1,7 @@
+---
+title: "Command reference"
+permalink: /cli.html
+---
 # Command reference
 
 Two CLIs ship with chasm. `chasm` is the operator's daily interface;

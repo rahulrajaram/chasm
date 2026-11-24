@@ -1,3 +1,7 @@
+---
+title: "Terminal clipboard"
+permalink: /clipboard.html
+---
 # Terminal clipboard
 
 `chasm shell` by itself is a plain terminal session: the core `chasm`

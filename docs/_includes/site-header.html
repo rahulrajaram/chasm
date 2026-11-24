@@ -1,0 +1,24 @@
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header">
+  <div class="site-header__inner">
+    <a class="brand" href="{{ '/' | relative_url }}">
+      <svg class="brand__mark" width="26" height="26" viewBox="0 0 26 26" aria-hidden="true" focusable="false"><rect width="26" height="26" rx="7" fill="#FACC15"/><path d="M17.5 9.2A5.4 5.4 0 1 0 17.5 16.8" fill="none" stroke="#0A0A0A" stroke-width="2.6" stroke-linecap="round"/></svg>
+      <span>{{ site.title }}</span>
+    </a>
+    <nav class="site-nav" aria-label="Main">
+      {%- for link in site.data.navigation.header %}
+      {%- if link.external %}
+      <a href="{{ link.url }}">{{ link.title }}</a>
+      {%- else %}
+      <a href="{{ link.url | relative_url }}"{% if link.match and page.url contains link.match %} aria-current="page"{% elsif page.url == link.url %} aria-current="page"{% endif %}>{{ link.title }}</a>
+      {%- endif %}
+      {%- endfor %}
+    </nav>
+    <div class="site-header__actions">
+      {%- if page.layout == "guide" %}
+      <a class="site-header__guides" href="#guides">All guides</a>
+      {%- endif %}
+      <a class="button" href="{{ site.data.navigation.guides.first.items.first.url | relative_url }}">Get started</a>
+    </div>
+  </div>
+</header>

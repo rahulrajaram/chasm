@@ -1,3 +1,7 @@
+---
+title: "Site configuration"
+permalink: /site-config.html
+---
 # Site configuration
 
 `/etc/chasm/site.conf` configures one Chasm installation. The installer

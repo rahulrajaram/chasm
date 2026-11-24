@@ -1,3 +1,7 @@
+---
+title: "Upgrading and uninstalling"
+permalink: /upgrade-and-uninstall.html
+---
 # Upgrading and uninstalling
 
 Upgrade Chasm by re-running the installer from a trusted checkout of the

@@ -1,0 +1,22 @@
+{%- comment -%}
+  "On this page" list built at build time from the rendered <h2> tags,
+  so it needs no JavaScript. Shown only when a page has 2+ headings.
+  Usage: {% include toc.html html=content %}
+{%- endcomment -%}
+{%- assign toc_parts = include.html | split: "<h2" -%}
+{%- if toc_parts.size > 2 -%}
+<nav class="toc" aria-label="On this page">
+  <p class="toc__title">On this page</p>
+  <ol>
+  {%- for part in toc_parts offset: 1 -%}
+    {%- assign toc_head = part | split: "</h2>" | first -%}
+    {%- assign toc_attrs = toc_head | split: ">" | first -%}
+    {%- if toc_attrs contains 'id="' -%}
+      {%- assign toc_id = toc_attrs | split: 'id="' | last | split: '"' | first -%}
+      {%- assign toc_text = toc_head | remove_first: toc_attrs | remove_first: ">" | strip_html | strip -%}
+    <li><a href="#{{ toc_id }}">{{ toc_text }}</a></li>
+    {%- endif -%}
+  {%- endfor -%}
+  </ol>
+</nav>
+{%- endif -%}

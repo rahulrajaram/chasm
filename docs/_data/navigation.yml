@@ -1,0 +1,41 @@
+header:
+  - title: Compare
+    url: /comparison.html
+  - title: CLI
+    url: /cli.html
+  - title: GitHub
+    url: https://github.com/rahulrajaram/chasm
+    external: true
+guides:
+  - section: Getting started
+    items:
+      - title: "Installing chasm"
+        url: /install.html
+      - title: "Your first sandbox"
+        url: /first-sandbox.html
+      - title: "Chasm compared with Incus, Docker, Firecracker, Vagrant and gVisor"
+        url: /comparison.html
+  - section: Operating a site
+    items:
+      - title: "Architecture"
+        url: /architecture.html
+      - title: "Site configuration"
+        url: /site-config.html
+      - title: "Command reference"
+        url: /cli.html
+      - title: "Idioms"
+        url: /idioms.html
+      - title: "Troubleshooting"
+        url: /troubleshooting.html
+      - title: "Upgrading and uninstalling"
+        url: /upgrade-and-uninstall.html
+  - section: Extensions and reference
+    items:
+      - title: "Plugins: the optional-component contract"
+        url: /plugins.html
+      - title: "Terminal clipboard"
+        url: /clipboard.html
+      - title: "Audit a disposable Chasm guest with Lynis"
+        url: /guest-security-audit.html
+      - title: "Glossary"
+        url: /glossary.html

@@ -1,3 +1,7 @@
+---
+title: "Glossary"
+permalink: /glossary.html
+---
 # Glossary
 
 - **Site descriptor** — `/etc/chasm/site.conf`: the flat

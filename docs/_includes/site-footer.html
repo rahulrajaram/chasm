@@ -1,0 +1,10 @@
+<footer class="site-footer">
+  <div class="site-footer__inner">
+    <p>{{ site.title }} — {{ site.description }}</p>
+    <nav class="site-footer__links" aria-label="Footer">
+      <a href="{{ '/' | relative_url }}">Home</a>
+      <a href="{{ site.data.navigation.guides.first.items.first.url | relative_url }}">Guides</a>
+      <a href="{{ site.github_url }}">GitHub</a>
+    </nav>
+  </div>
+</footer>

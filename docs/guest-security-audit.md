@@ -1,3 +1,7 @@
+---
+title: "Audit a disposable Chasm guest with Lynis"
+permalink: /guest-security-audit.html
+---
 # Audit a disposable Chasm guest with Lynis
 
 Use this diagnostic on a dedicated qualification site provisioned from the candidate you are testing. Lynis inventories the guest OS and its configuration. The score alone cannot establish whether host isolation or network policy works.

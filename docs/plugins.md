@@ -1,3 +1,7 @@
+---
+title: "Plugins: the optional-component contract"
+permalink: /plugins.html
+---
 # Plugins: the optional-component contract
 
 Chasm core is self-contained. It builds, installs, verifies, and templates a

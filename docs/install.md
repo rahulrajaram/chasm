@@ -1,14 +1,38 @@
+---
+title: "Installing chasm"
+permalink: /install.html
+---
 # Installing chasm
 
 These instructions provision a fresh Debian (x86_64) host — tested on
 Debian 13; Debian 12 is untested. The installer is
 `scripts/install-chasm.sh` in this repository; run it from a checkout.
 
-```sh
-git clone https://github.com/rahulrajaram/chasm.git
-cd chasm
-sudo scripts/install-chasm.sh --provision
-```
+<pre><code class="language-sh"><span class="term-command">git</span> <span class="term-action">clone</span> <span class="term-url">https://github.com/rahulrajaram/chasm.git</span>
+<span class="term-command">cd</span> <span class="term-path">chasm</span>
+</code></pre>
+
+## Compact install
+
+Use this setup for one sandbox on a fresh Debian 13 x86_64 site that meets the [host requirements](#requirements-recap). Allow **18 GiB free** on the filesystem holding `/var/lib/incus`. The sandbox gets a **4 GiB root disk** within an **8 GiB storage pool**. The installer also checks for 10 GiB of host headroom.
+
+1. From the trusted checkout, open `host-config/site.conf.example` in your editor **before the first provision**. Set the pool size and uncomment the guest disk setting. Leave the other settings at their defaults if the default network is available.
+
+   ```text
+   pool_size_gib=8
+   profile_root_disk_gib=4
+   ```
+
+2. Run the installer as your ordinary operator account using sudo. It checks host prerequisites and copies the descriptor into place on a fresh site.
+
+   ```sh
+   sudo scripts/install-chasm.sh --provision
+   sudo scripts/install-chasm.sh --verify
+   ```
+
+3. Follow [Your first sandbox](first-sandbox.md) to create and start a guest.
+
+The Debian 13 trial used about **2.3 GiB** of additional space on the Incus filesystem with the image, sealed template and one running guest. Host OS files and packages were on a separate filesystem. Allow more space for larger workloads, snapshots or additional guests. Keeping the stock 64 GiB pool instead requires 74 GiB free before provisioning.
 
 ## Use a trusted checkout
 
@@ -47,9 +71,8 @@ invocation therefore needs a root-owned checkout; when invoked through
   neither a home directory nor a cache path.
 - Internet access at provision time (the Debian package install and the
   base-image download).
-- Roughly 74 GiB free disk on the `/var/lib/incus` filesystem (64 GiB
-  storage pool plus a fixed 10 GiB margin checked by preflight), and
-  memory for each sandbox budget you plan to run plus the host. Budgets
+- Disk space for the selected pool. See [compact install](#compact-install) for the tested small-site settings.
+- Provide memory for each sandbox budget you plan to run plus the host. Budgets
   have a 512 MiB floor and no fixed product cap: a budget is refused when
   it exceeds the host's memory minus `host_reserve_mib`.
 

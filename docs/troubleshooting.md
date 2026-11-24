@@ -1,12 +1,18 @@
+---
+title: "Troubleshooting"
+permalink: /troubleshooting.html
+---
 # Troubleshooting
 
 Two read-only tools answer most questions: the installer's verify mode
 and the sandbox diagnostic.
 
 ```sh
-sudo scripts/install-chasm.sh --verify     # drift report: descriptor,
-                                          # identity, binaries, units,
-                                          # Incus objects, firewall, sshd
+# Check the site descriptor, host identity, binaries and units.
+# Verify Incus, firewall and SSH configuration.
+sudo scripts/install-chasm.sh --verify
+
+# Inspect one sandbox.
 sudo scripts/diagnostics/sandbox-health.sh NAME
 ```
 

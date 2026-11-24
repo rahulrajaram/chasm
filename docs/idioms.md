@@ -1,3 +1,7 @@
+---
+title: "Idioms"
+permalink: /idioms.html
+---
 # Idioms
 
 These are the rules chasm's code is held to. Each one comes from a real

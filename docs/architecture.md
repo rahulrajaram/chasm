@@ -1,3 +1,7 @@
+---
+title: "Architecture"
+permalink: /architecture.html
+---
 # Architecture
 
 chasm is a host control plane: a small set of daemons, CLIs, and scripts
@@ -8,22 +12,10 @@ typical command. The security consequences are drawn out in
 
 ## Components
 
-```
-operator
-  │  chasm (unprivileged CLI)          chasmctl (unprivileged CLI)
-  │       │                                   │
-  │       │  sudo (one narrow grant)          │ Unix socket
-  │       ▼                                   ▼
-  │  chasm __shell ──► incus exec     chasm-supervisor.service
-  │                                      (unprivileged service user)
-  │                                             │ Unix socket,
-  │                                             │ peer-credential gated
-  │                                             ▼
-  │                                  chasm-executor.service (root)
-  │                                             │
-  │                                             ▼
-  └──────────────────────────────────── incus (VMs, storage, network)
-```
+<figure>
+  <a href="assets/diagrams/control-plane.svg"><img src="assets/diagrams/control-plane.svg" width="760" height="525" alt="Operator commands reach Incus through the unprivileged supervisor and root executor. Interactive shells use a separate sudo-gated helper."></a>
+  <figcaption>Chasm’s two paths to Incus. <a href="assets/diagrams/control-plane.excalidraw" download>Download the editable Excalidraw diagram</a>.</figcaption>
+</figure>
 
 - **`cmd/chasm`** — the operator CLI. Lifecycle and observation commands
   talk to the unprivileged supervisor; `chasm shell` uses the sudo grant

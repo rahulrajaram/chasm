@@ -1,3 +1,7 @@
+---
+title: "Your first sandbox"
+permalink: /first-sandbox.html
+---
 # Your first sandbox
 
 This walkthrough assumes a provisioned site (see

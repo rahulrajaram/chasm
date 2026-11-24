@@ -1,0 +1,37 @@
+{%- comment -%}
+  Previous / next links, in the order of _data/navigation.yml.
+  Usage: {% include pager.html flat=flat_guides %}
+{%- endcomment -%}
+{%- assign pager_list = include.flat -%}
+{%- assign pager_idx = nil -%}
+{%- assign pager_prev = nil -%}
+{%- assign pager_next = nil -%}
+{%- for item in pager_list -%}
+  {%- if item.url == page.url -%}{%- assign pager_idx = forloop.index0 -%}{%- endif -%}
+{%- endfor -%}
+{%- if pager_idx != nil -%}
+  {%- if pager_idx > 0 -%}
+    {%- assign pager_p = pager_idx | minus: 1 -%}
+    {%- assign pager_prev = pager_list[pager_p] -%}
+  {%- endif -%}
+  {%- assign pager_n = pager_idx | plus: 1 -%}
+  {%- if pager_n < pager_list.size -%}
+    {%- assign pager_next = pager_list[pager_n] -%}
+  {%- endif -%}
+{%- endif -%}
+{%- if pager_prev or pager_next %}
+<nav class="pager" aria-label="Previous and next guides">
+  {%- if pager_prev %}
+  <a class="pager__link pager__link--prev" href="{{ pager_prev.url | relative_url }}" rel="prev">
+    <span class="pager__label">← Previous</span>
+    <span class="pager__title">{{ pager_prev.title }}</span>
+  </a>
+  {%- endif %}
+  {%- if pager_next %}
+  <a class="pager__link pager__link--next" href="{{ pager_next.url | relative_url }}" rel="next">
+    <span class="pager__label">Next →</span>
+    <span class="pager__title">{{ pager_next.title }}</span>
+  </a>
+  {%- endif %}
+</nav>
+{%- endif %}

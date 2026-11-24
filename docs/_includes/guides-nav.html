@@ -1,0 +1,14 @@
+<nav id="guides" class="sidebar" aria-label="Guides">
+  <p class="sidebar__heading">All guides</p>
+  {%- for section in site.data.navigation.guides %}
+  {%- assign section_id = section.section | slugify | prepend: "nav-" %}
+  <div class="sidebar__section">
+    <p class="sidebar__title" id="{{ section_id }}">{{ section.section }}</p>
+    <ul aria-labelledby="{{ section_id }}">
+      {%- for item in section.items %}
+      <li><a href="{{ item.url | relative_url }}"{% if item.url == page.url %} aria-current="page"{% endif %}>{{ item.title }}</a></li>
+      {%- endfor %}
+    </ul>
+  </div>
+  {%- endfor %}
+</nav>

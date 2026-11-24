@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="{{ site.lang | default: 'en' }}">
+<head>
+{% include head.html %}
+</head>
+<body class="layout-{{ page.layout | default: 'default' }}">
+{% include site-header.html %}
+{%- comment -%}
+  Wrap every <table> in a scroll box at build time (no JavaScript),
+  so wide comparison tables scroll sideways on phones.
+{%- endcomment %}
+{{ content | replace: "<table", '<div class="table-wrap" role="region" aria-label="Scrollable table" tabindex="0"><table' | replace: "</table>", "</table></div>" }}
+{% include site-footer.html %}
+</body>
+</html>

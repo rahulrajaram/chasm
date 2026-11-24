@@ -1,0 +1,34 @@
+---
+layout: default
+---
+{%- assign flat_guides = "" | split: "" -%}
+{%- assign current_section = nil -%}
+{%- for section in site.data.navigation.guides -%}
+  {%- for item in section.items -%}
+    {%- assign flat_guides = flat_guides | push: item -%}
+    {%- if item.url == page.url -%}{%- assign current_section = section.section -%}{%- endif -%}
+  {%- endfor -%}
+{%- endfor %}
+<div class="docs">
+  <main id="content" class="docs__main">
+    <article class="prose">
+      {{ content }}
+
+      {% include pager.html flat=flat_guides %}
+
+      <footer class="page-meta">
+        {%- assign updated = page.last_modified_at | default: page.updated %}
+        {%- if updated %}
+        <span>Last updated <time datetime="{{ updated | date_to_xmlschema }}">{{ updated | date: "%B %-d, %Y" }}</time></span>
+        {%- else %}
+        <span></span>
+        {%- endif %}
+        <a href="{{ site.github_url }}/edit/{{ site.edit_branch | default: 'main' }}/docs/{{ page.path }}">Edit this page on GitHub</a>
+      </footer>
+    </article>
+  </main>
+
+  {% include toc.html html=content %}
+
+  {% include guides-nav.html %}
+</div>

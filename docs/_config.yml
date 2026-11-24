@@ -1,0 +1,39 @@
+# chasm docs — Jekyll config for GitHub Pages (publishing from /docs)
+title: chasm
+description: "Disposable Linux VMs for untrusted workloads on Debian."
+lang: en
+
+# Project site served at https://rahulrajaram.github.io/chasm/
+url: "https://rahulrajaram.github.io"
+baseurl: "/chasm"
+github_url: "https://github.com/rahulrajaram/chasm"
+edit_branch: main
+
+permalink: none
+
+markdown: kramdown
+highlighter: rouge
+kramdown:
+  input: GFM
+  auto_ids: true
+  hard_wrap: false
+  syntax_highlighter: rouge
+
+# Both plugins are on the GitHub Pages allow-list.
+plugins:
+  - jekyll-seo-tag
+  - jekyll-sitemap
+
+# Existing guides keep their flat URLs.
+defaults:
+  - scope:
+      path: ""
+      type: pages
+    values:
+      layout: guide
+
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - vendor
+  - README.md

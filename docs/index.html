@@ -1,0 +1,46 @@
+---
+layout: landing
+title: Disposable Linux VMs for untrusted workloads
+description: Run untrusted workloads on Debian with Chasm. Explore isolation boundaries, measured startup times and the operator CLI.
+---
+<section class="hero">
+  <h1>Disposable Linux VMs for untrusted workloads</h1>
+  <p class="lede">Want to try an unfamiliar repository? Clone it inside a Chasm sandbox, install its dependencies, and run its tests. Each sandbox is a Linux VM on your Debian host, with its own kernel, workspace, and CPU and memory limits. Stop it to pick up tomorrow, or delete it when you’re done.</p>
+  <div class="hero__actions">
+    <a class="button" href="install.html">Install Chasm</a>
+    <a class="button button--secondary" href="comparison.html">Compare sandboxing tools</a>
+  </div>
+</section>
+<section class="section">
+    <h2>Can I run Chasm on my host?</h2>
+    <p>Start small: run a Linux sandbox with a 4 GiB guest disk on Debian 13. <a href="install.html#compact-install">Install the compact configuration</a>.</p>
+
+</section>
+<section class="section">
+    <h2>What does a sandbox isolate?</h2>
+    <p>Each VM has its own kernel, root disk, and <code>/workspace</code>. Host administrators retain access. Every sandbox on the site mounts <code>/shared</code> read-write, and guests on the stock bridge can communicate directly. Chasm is designed for a trusted single operator. <a href="architecture.html">Architecture and network boundaries</a></p>
+
+</section>
+<section class="section">
+    <h2>How do I run my first workload?</h2>
+    <p>On a provisioned host, run these commands as the operator. Work inside the guest shell and type <code>exit</code> to return to the host.</p>
+{% highlight bash %}
+chasm create demo
+chasm start demo
+chasm shell demo
+{% endhighlight %}
+    <p>Use <code>chasm stop demo</code> to keep the VM and workspace for later. Use <code>chasm delete demo</code> on the stopped sandbox to remove both. Files on <code>/shared</code> survive deletion. <a href="first-sandbox.html">First sandbox walkthrough</a></p>
+
+</section>
+    <nav class="section" aria-label="Chasm reference">
+      <h2>Reference</h2>
+      <ul class="guide-list">
+        <li><a href="comparison.html">Compare isolation models, performance and security testing</a></li>
+        <li><a href="cli.html">CLI commands and storage behavior</a></li>
+        <li><a href="site-config.html">Site configuration and resource budgets</a></li>
+        <li><a href="troubleshooting.html">Diagnose a sandbox or host</a></li>
+        <li><a href="plugins.html">Optional plugins</a> and <a href="guest-security-audit.html">guest auditing with Lynis</a></li>
+        <li><a href="upgrade-and-uninstall.html">Upgrade or uninstall Chasm</a></li>
+        <li><a href="https://github.com/rahulrajaram/chasm">Source code and MIT license</a></li>
+      </ul>
+    </nav>
