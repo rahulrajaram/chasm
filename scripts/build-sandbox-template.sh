@@ -214,13 +214,9 @@ if [ -n "$resume_builder" ]; then
     [ "${#resumed_from_identity}" -eq 64 ] || fail "resume builder identity length is invalid"
     [ "$(incus config get "$resume_builder" volatile.base_image)" = "$TEMPLATE_BASE_IMAGE_FINGERPRINT" ] ||
         fail "resume builder base image does not match the current definition"
-    resume_config=$(incus config show "$resume_builder") || fail "could not read resume builder configuration"
-    resume_profile=$(printf '%s\n' "$resume_config" | awk '
-        /^profiles:$/ {profiles=1; next}
-        profiles && /^- / {print; next}
-        profiles {exit}
-    ')
-    [ "$resume_profile" = "- $PROFILE_NAME" ] ||
+    resume_profiles=$(incus list "$resume_builder" -c nP --format csv) ||
+        fail "could not read resume builder profiles"
+    [ "$resume_profiles" = "$resume_builder,$PROFILE_NAME" ] ||
         fail "resume builder profile does not match the current definition"
     for requirement in \
         "template_identity=$resumed_from_identity" \
@@ -268,9 +264,17 @@ if [ -n "$resume_builder" ]; then
             snapshot_config=$(incus config show "$builder_name/sealed") ||
                 fail "sealed snapshot configuration is unavailable"
             printf '%s\n' "$snapshot_config" | awk '
-                /^[^ ]/ {devices = $0 == "devices:"; nic = 0}
-                devices && /^  [^ ]/ {nic = $0 == "  eth0:"; if (nic) found = 1}
-                nic && /^    ipv4[.]address:/ {claimed = 1}
+                /^[^ ]/ {devices = $0 == "devices:"; eth = 0; child = 0; next}
+                devices && /^ +[^ ]/ {
+                    indent = match($0, /[^ ]/) - 1
+                    key = substr($0, indent + 1)
+                    if (!child) child = indent
+                    if (indent == child) eth = key == "eth0:"
+                    else if (eth && indent > child) {
+                        if (key == "type: nic") found = 1
+                        if (key ~ /^ipv4[.]address:/) claimed = 1
+                    }
+                }
                 END {exit !(found && !claimed)}' ||
                 fail "sealed snapshot lacks a neutral eth0 device"
             [ "$(incus config get "$builder_name" security.protection.delete)" = true ] ||

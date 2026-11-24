@@ -433,10 +433,20 @@ fail() { echo "$*" >&2; exit 74; }
 incus() {
     case "$*" in
         'info as-build-test') echo 'Status: STOPPED' ;;
-        'config show as-build-test') printf 'profiles:\n- trial-profile\n' ;;
+        'list as-build-test -c nP --format csv')
+            case "$scenario" in
+                wrong-name) echo as-build-other,trial-profile ;;
+                inventory-failure) return 1 ;;
+                extra-profile) printf 'as-build-test,"trial-profile\nother-profile"\n' ;;
+                *) echo as-build-test,trial-profile ;;
+            esac ;;
         'config show as-build-test/sealed')
-            printf 'devices:\n  eth0:\n    type: nic\n'
-            if [ "$scenario" = snapshot-address ]; then echo '    ipv4.address: example'; fi ;;
+            case "$scenario" in
+                incus7) printf 'devices:\n  eth0:\n    name: eth0\n    network: trialbr0\n    type: nic\nephemeral: false\n' ;;
+                *)
+                    printf 'devices:\n    eth0:\n        type: nic\n'
+                    if [ "$scenario" = snapshot-address ]; then echo '        ipv4.address: example'; fi ;;
+            esac ;;
         'config get as-build-test user.trial.template-build-identity') echo "$receipt_identity" ;;
         'config get as-build-test volatile.base_image') echo base ;;
         'config get as-build-test security.protection.delete')
@@ -465,11 +475,11 @@ incus() {
 . "$WORK/recover.sh"
 exit 98
 DRIVER
-for scenario in recovered stale no-snapshot foreign-snapshot unprotected address snapshot-address collision; do
+for scenario in recovered incus7 extra-profile wrong-name inventory-failure stale no-snapshot foreign-snapshot unprotected address snapshot-address collision; do
     : > "$WORK/recovery-operations"
     status=0
     scenario=$scenario sh "$WORK/recover-driver.sh" > "$WORK/recover-log" 2>&1 || status=$?
-    if [ "$scenario" = recovered ]; then
+    if [ "$scenario" = recovered ] || [ "$scenario" = incus7 ]; then
         [ "$status" -eq 0 ] && [ "$(cat "$WORK/recovery-operations")" = publish ] ||
             die "sealed recovery failed: $(cat "$WORK/recover-log")"
     else
