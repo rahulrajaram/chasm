@@ -136,6 +136,16 @@ case "$template_name" in
     *) fail "unsafe template name" ;;
 esac
 
+publish_sealed_builder() {
+    if ! incus move "$builder_name" "$template_name"; then
+        published_receipt=$(incus config get "$template_name" "$(metadata template-receipt)" 2>/dev/null) || published_receipt=
+        [ "$published_receipt" = "$receipt" ] ||
+            fail "could not confirm publication of sealed builder $builder_name as $template_name (receipt $receipt)"
+    fi
+}
+
+resume_builder=${SANDBOX_TEMPLATE_RESUME_BUILDER:-}
+resume_receipt=${SANDBOX_TEMPLATE_RESUME_RECEIPT:-}
 if incus info "$template_name" >/dev/null 2>&1; then
     [ "$(incus info "$template_name" | awk '/^Status:/ {print $2}')" = STOPPED ] ||
         fail "existing template is not stopped"
@@ -147,6 +157,11 @@ if incus info "$template_name" >/dev/null 2>&1; then
         fail "existing template profile manifest mismatch"
     receipt=$(incus config get "$template_name" "$(metadata template-receipt)")
     [ -f "$receipt" ] && [ ! -L "$receipt" ] || fail "template receipt is missing or unsafe"
+    if [ -n "$resume_builder$resume_receipt" ] && [ "$check_only" -eq 0 ]; then
+        [ -n "$resume_builder" ] && [ "$receipt" = "$resume_receipt" ] &&
+            grep -Fxq "builder_name=$resume_builder" "$receipt" ||
+            fail "existing template belongs to another build"
+    fi
     grep -Fx "template_identity=$template_identity" "$receipt" >/dev/null ||
         fail "template receipt identity mismatch"
     grep -Fx "template_name=$template_name" "$receipt" >/dev/null ||
@@ -175,15 +190,6 @@ fi
 # to sandbox starts, so the admission snapshot cannot go stale before the
 # builder exists.
 builder_acquire_lifecycle_lock
-builder_admission=$(builder_memory_admission \
-    "$PROFILE_NAME" "$SITE_HOST_RESERVE_MIB" "$TEMPLATE_BUILD_MEMORY_MARGIN_MIB" "$resource_prefix") ||
-    fail "$builder_admission"
-echo "template build: $builder_admission"
-root_free_percent=$(df -Pk /var/lib/incus | awk 'NR == 2 {gsub(/%/, "", $5); print 100-$5}')
-[ "$root_free_percent" -ge 10 ] || fail "host storage headroom is below 10 percent"
-
-resume_builder=${SANDBOX_TEMPLATE_RESUME_BUILDER:-}
-resume_receipt=${SANDBOX_TEMPLATE_RESUME_RECEIPT:-}
 resumed_from_identity=
 if [ -n "$resume_builder" ]; then
     case "$resume_builder" in
@@ -208,8 +214,11 @@ if [ -n "$resume_builder" ]; then
     [ "${#resumed_from_identity}" -eq 64 ] || fail "resume builder identity length is invalid"
     [ "$(incus config get "$resume_builder" volatile.base_image)" = "$TEMPLATE_BASE_IMAGE_FINGERPRINT" ] ||
         fail "resume builder base image does not match the current definition"
-    resume_profile=$(incus config show "$resume_builder" | awk '
-        /^profiles:$/ { getline; print; exit }
+    resume_config=$(incus config show "$resume_builder") || fail "could not read resume builder configuration"
+    resume_profile=$(printf '%s\n' "$resume_config" | awk '
+        /^profiles:$/ {profiles=1; next}
+        profiles && /^- / {print; next}
+        profiles {exit}
     ')
     [ "$resume_profile" = "- $PROFILE_NAME" ] ||
         fail "resume builder profile does not match the current definition"
@@ -223,17 +232,68 @@ if [ -n "$resume_builder" ]; then
         "profile_manifest_sha256=$TEMPLATE_PROFILE_MANIFEST_SHA256" \
         "packages_layer_sha256=$TEMPLATE_PACKAGES_LAYER_SHA256" \
         "profile_reader_sha256=$TEMPLATE_PROFILE_READER_SHA256" \
-        "builder_name=$resume_builder" \
-        "result=failed"
+        "builder_name=$resume_builder"
     do
         grep -Fx "$requirement" "$resume_receipt" >/dev/null ||
             fail "resume receipt does not bind the preserved builder: $requirement"
     done
     builder_name=$resume_builder
+    resume_result=$(awk -F= '$1 == "result" {result=$2} END {print result}' "$resume_receipt")
+    case "$resume_result" in
+        passed)
+            # Only a fully sealed builder of the current definition may be
+            # published directly. All reads must succeed, including empty
+            # values for the neutralized IPv4 address.
+            [ "$resumed_from_identity" = "$template_identity" ] ||
+                fail "sealed builder identity differs from the current definition"
+            printf '%s\n' "$resume_receipt" |
+                grep -Eq "^/var/lib/chasm/template-builds/$template_identity/[0-9]{8}T[0-9]{6}Z-[0-9]+/receipt$" ||
+                fail "sealed receipt directory does not match the current identity"
+            [ "$(realpath -e "$resume_receipt")" = "$resume_receipt" ] ||
+                fail "sealed receipt path is not canonical"
+            for marker in "template_name=$template_name" snapshot=sealed template_ipv4=dynamic template_status=STOPPED protection_delete=true; do
+                grep -Fxq "$marker" "$resume_receipt" || fail "missing sealed receipt marker: $marker"
+            done
+            for instance in "$builder_name" "$builder_name/sealed"; do
+                [ "$(incus config get "$instance" "$(metadata template-receipt)")" = "$resume_receipt" ] &&
+                    [ "$(incus config get "$instance" "$(metadata template-identity)")" = "$template_identity" ] &&
+                    [ "$(incus config get "$instance" "$(metadata bootstrap-profile)")" = "$BOOTSTRAP_PROFILE" ] &&
+                    [ "$(incus config get "$instance" "$(metadata profile-manifest-sha256)")" = "$TEMPLATE_PROFILE_MANIFEST_SHA256" ] ||
+                    fail "sealed builder or snapshot ownership does not match: $instance"
+                claim=$(incus config get "$instance" "$(metadata instance-ipv4)") &&
+                    [ -z "$claim" ] || fail "sealed instance address metadata is unavailable or claimed: $instance"
+            done
+            address=$(incus config device get "$builder_name" eth0 ipv4.address) &&
+                [ -z "$address" ] || fail "sealed builder address is unavailable or claimed"
+            snapshot_config=$(incus config show "$builder_name/sealed") ||
+                fail "sealed snapshot configuration is unavailable"
+            printf '%s\n' "$snapshot_config" | awk '
+                /^[^ ]/ {devices = $0 == "devices:"; nic = 0}
+                devices && /^  [^ ]/ {nic = $0 == "  eth0:"; if (nic) found = 1}
+                nic && /^    ipv4[.]address:/ {claimed = 1}
+                END {exit !(found && !claimed)}' ||
+                fail "sealed snapshot lacks a neutral eth0 device"
+            [ "$(incus config get "$builder_name" security.protection.delete)" = true ] ||
+                fail "sealed builder is not protected"
+            receipt=$resume_receipt
+            publish_sealed_builder
+            echo "template build: published sealed builder=$builder_name template=$template_name receipt=$receipt"
+            exit 0
+            ;;
+        failed) ;;
+        *) fail "resume receipt has no completed build result" ;;
+    esac
 else
     [ -z "$resume_receipt" ] || fail "resume receipt requires a resume builder"
     builder_name=as-build-$template_prefix-$$
 fi
+
+builder_admission=$(builder_memory_admission \
+    "$PROFILE_NAME" "$SITE_HOST_RESERVE_MIB" "$TEMPLATE_BUILD_MEMORY_MARGIN_MIB" "$resource_prefix") ||
+    fail "$builder_admission"
+echo "template build: $builder_admission"
+root_free_percent=$(df -Pk /var/lib/incus | awk 'NR == 2 {gsub(/%/, "", $5); print 100-$5}')
+[ "$root_free_percent" -ge 10 ] || fail "host storage headroom is below 10 percent"
 
 # The builder address is fixed (sandbox_ipv4_prefix + 11) and never
 # reselected, so an instance created by an older build can still hold it:
@@ -462,10 +522,6 @@ sync -f "$receipt"
 # A passed receipt certifies the sealed instance. After this point a failed
 # client request cannot prove that the server failed to publish it.
 committed=1
-if ! incus move "$builder_name" "$template_name"; then
-    published_receipt=$(incus config get "$template_name" "$(metadata template-receipt)" 2>/dev/null) || published_receipt=
-    [ "$published_receipt" = "$receipt" ] ||
-        fail "could not confirm publication of sealed builder $builder_name as $template_name (receipt $receipt)"
-fi
+publish_sealed_builder
 trap - EXIT HUP INT TERM
 echo "template build: passed template=$template_name receipt=$receipt"

@@ -33,6 +33,9 @@ TEMPLATE=$ROOT/host-config/firewall.nft.template
 WORK=$(mktemp -d)
 trap 'rm -rf -- "$WORK"' EXIT HUP INT TERM
 mkdir -p "$WORK/bin" "$WORK/state"
+sed "s|/proc/net/ip_tables_names|$WORK/legacy-tables|g" "$HELPER" >"$WORK/helper"
+chmod +x "$WORK/helper"
+HELPER=$WORK/helper
 
 # --- fake iptables -------------------------------------------------------
 # Stateful rule store: one "-A <CHAIN> <spec...>" line per rule in
@@ -46,6 +49,10 @@ log() {
     printf '%s %s\n' "$((seq + 1))" "$*" >>"$FW_CALLLOG"
 }
 log "iptables $*"
+if [ "$1" = --version ]; then
+    echo "iptables v1.8.9 (${FW_BACKEND:-nf_tables})"
+    exit 0
+fi
 op=$1
 chain=$2
 shift 2
@@ -290,7 +297,6 @@ for utility in basename dirname sed cat grep mktemp rm cp touch wc; do
     ln -s "$(command -v "$utility")" "$WORK/nft-only/$utility"
 done
 ln -s "$WORK/bin/nft" "$WORK/nft-only/nft"
-sed "s|/proc/net/ip_tables_names|$WORK/legacy-tables|g" "$HELPER" >"$WORK/helper"
 run_nft_only() {
     FW_STATE=$WORK/state FW_CALLLOG=$CALLLOG FW_TABLE=$TABLE FW_LAST_RULESET=$LAST_RULESET \
     PATH=$WORK/nft-only CHASM_SITE_HOST_LIB=$WORK/site-host-lib.sh CHASM_FIREWALL_TEMPLATE=$TEMPLATE \
@@ -311,5 +317,34 @@ for mode in remove apply; do
     rm "$WORK/legacy-tables"
     [ -f "$TABLE" ] || fail "$mode removed the existing table"
 done
+
+# Exercise both alternatives switches. A stale accept in the other
+# backend must preserve the vetting table for both apply and remove.
+ln -s "$WORK/bin/iptables" "$WORK/nft-only/iptables"
+for utility in awk mv; do
+    ln -s "$(command -v "$utility")" "$WORK/nft-only/$utility"
+done
+cat >"$WORK/nft-only/iptables-legacy" <<'STUB'
+#!/bin/sh
+[ "$*" = "-t filter -S" ] || exit 9
+echo "${FW_LEGACY_RULES:-}"
+STUB
+chmod +x "$WORK/nft-only/iptables-legacy"
+echo filter >"$WORK/legacy-tables"
+for mode in apply remove; do
+    : >"$CALLLOG"
+    if FW_BACKEND=legacy FW_RULESET='iifname "oldbr0" accept comment "chasm_bridge"' run_nft_only "$mode"; then
+        fail "$mode overlooked tagged nft rules after switching to legacy"
+    fi
+    if FW_BACKEND=nf_tables FW_LEGACY_RULES='-A INPUT -i oldbr0 -m comment --comment chasm_bridge -j ACCEPT' run_nft_only "$mode"; then
+        fail "$mode overlooked tagged legacy rules after switching to nft"
+    fi
+    if grep -Eq 'nft (-f|delete)|iptables -[DI]' "$CALLLOG"; then
+        fail "$mode mutated firewall state before resolving inactive-backend rules"
+    fi
+    [ -f "$TABLE" ] || fail "$mode removed the vetting table"
+done
+FW_BACKEND=nf_tables FW_LEGACY_RULES='-P INPUT ACCEPT' run_nft_only apply ||
+    fail "a clean inactive legacy filter prevented apply"
 
 echo "test-firewall-helper: all scenarios passed"

@@ -101,22 +101,41 @@ sweep_bridge_accepts() {
         done
 }
 
-# Without iptables, nft can still inspect the nft backend. A legacy
-# filter table cannot be inspected this way, so its presence is ambiguous.
-verify_no_rescue_rules() {
-    if [ -e /proc/net/ip_tables_names ]; then
+# An alternatives switch can leave rescue rules in the other backend.
+# Inspect that backend before replacing or deleting the table that vets
+# those accepts. With no frontend, inspect both backends.
+verify_inactive_backends() {
+    backend=none
+    if command -v iptables >/dev/null 2>&1; then
+        version=$(iptables --version) || exit 1
+        case "$version" in
+            *'(nf_tables)'*) backend=nft ;;
+            *'(legacy)'*) backend=legacy ;;
+            *) echo "safety stop: cannot identify active iptables backend: $version" >&2; exit 1 ;;
+        esac
+    fi
+    if [ "$backend" != legacy ] && [ -e /proc/net/ip_tables_names ]; then
         legacy_tables=$(cat /proc/net/ip_tables_names) || exit 1
         if printf '%s\n' "$legacy_tables" | grep -Fxq filter; then
-            echo "safety stop: install iptables to inspect the legacy filter table" >&2
-            exit 1
+            command -v iptables-legacy >/dev/null 2>&1 || {
+                echo "safety stop: install iptables-legacy to inspect the legacy filter table" >&2
+                exit 1
+            }
+            legacy_rules=$(iptables-legacy -t filter -S) || exit 1
+            if printf '%s\n' "$legacy_rules" | grep -Eq -- '--comment[[:space:]]+"?chasm_bridge"?([[:space:]]|$)'; then
+                echo "safety stop: reconcile existing chasm rescue rules with iptables-legacy" >&2
+                exit 1
+            fi
         fi
     fi
-    live_rules=$(nft list ruleset) || exit 1
-    case "$live_rules" in
-        *'comment "chasm_bridge"'*)
-            echo "safety stop: install iptables to reconcile existing chasm rescue rules" >&2
-            exit 1 ;;
-    esac
+    if [ "$backend" != nft ]; then
+        live_rules=$(nft list ruleset) || exit 1
+        case "$live_rules" in
+            *'comment "chasm_bridge"'*)
+                echo "safety stop: reconcile existing chasm rescue rules with iptables-nft" >&2
+                exit 1 ;;
+        esac
+    fi
 }
 
 remove_table() {
@@ -157,11 +176,10 @@ case "${1:-}" in
         render_ruleset "$ruleset_tmp"
         # Remove previous-interface accepts while the old table still vets
         # that interface. Any failure leaves the old table in place.
+        verify_inactive_backends
         if command -v iptables >/dev/null 2>&1; then
             sweep_bridge_accepts INPUT
             sweep_bridge_accepts FORWARD
-        else
-            verify_no_rescue_rules
         fi
         nft -f "$ruleset_tmp"
         rm -f -- "$ruleset_tmp"
@@ -195,6 +213,7 @@ case "${1:-}" in
         fi
         ;;
     remove)
+        verify_inactive_backends
         # Drain the rescue accepts BEFORE deleting the vetting table: while
         # the table lives, bridge packets stay fail-closed even when a drain
         # step fails. errexit does not apply inside while conditions, so a
@@ -224,8 +243,6 @@ case "${1:-}" in
                 # bridge_name change the exact-spec drain cannot match them.
                 sweep_bridge_accepts "$chain"
             done
-        else
-            verify_no_rescue_rules
         fi
         remove_table
         ;;

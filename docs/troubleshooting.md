@@ -150,7 +150,7 @@ its owner before changing it. A preserved builder can hold the address
 after a build failure. The failure prints the receipt path, and the
 receipt identifies any `preserved_builder`.
 
-To resume a stopped builder with a matching failed receipt, run the
+To resume a stopped builder with its matching receipt, run the
 installed builder as an administrator with both values from that receipt:
 
 ```sh
@@ -159,7 +159,9 @@ sudo env SANDBOX_TEMPLATE_RESUME_BUILDER="$builder_name" \
     /usr/local/lib/chasm/provision/scripts/build-sandbox-template.sh
 ```
 
-The builder validates the base image, profile, guest configuration and
+If sealing completed before the final rename, use the same command with the passed receipt. The builder verifies the stopped instance and its sealed snapshot, then finishes the rename.
+
+For an interrupted build with a failed receipt, the builder validates the base image, profile, guest configuration and
 completed package layer before sealing. If the retained builder cannot
 pass those checks, confirm its ownership and stopped state, then remove
 that builder only if its data can be discarded. Rerun provisioning to

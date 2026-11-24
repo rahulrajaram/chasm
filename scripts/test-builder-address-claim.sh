@@ -335,6 +335,7 @@ done
 # Simulate an acknowledged rename, a lost reply, a hard stop immediately
 # after the server rename, and a collision with another build. The mock
 # observes the source instance and receipt at publication time.
+sed -n '/^publish_sealed_builder() {/,/^}/p' "$BUILDER" > "$WORK/publish.sh"
 sed -n '/^echo "template build: phase=seal"/,$p' "$BUILDER" > "$WORK/seal.sh"
 cat > "$WORK/seal-driver.sh" <<'DRIVER'
 set -eu
@@ -380,6 +381,7 @@ incus() {
         *) echo "unexpected sealing call: $*" >&2; exit 98 ;;
     esac
 }
+. "$WORK/publish.sh"
 . "$WORK/seal.sh"
 DRIVER
 for scenario in acknowledged lost power collision; do
@@ -396,6 +398,83 @@ for scenario in acknowledged lost power collision; do
         published_receipt=$(cat "$WORK/$scenario/trial-template/receipt")
         [ "$published_receipt" = "$WORK/$scenario/receipt" ] && grep -Fxq result=passed "$published_receipt" ||
             die "$scenario left the published template without its own passed receipt"
+    fi
+done
+
+# Run explicit resume from receipt binding through publication. Remap only
+# the evidence root so a non-root test can exercise canonical path checks.
+awk '/^resumed_from_identity=$/{copy=1} /^builder_admission=/{exit} copy' "$BUILDER" |
+    sed "s|/var/lib/chasm/template-builds|$WORK/recovery|g" > "$WORK/recover.sh"
+cat > "$WORK/recover-driver.sh" <<'DRIVER'
+set -eu
+resume_builder=as-build-test
+template_name=trial-template
+template_identity=$(printf '%064d' 1)
+resume_receipt=$WORK/recovery/$template_identity/20260201T120000Z-123/receipt
+PROFILE_NAME=trial-profile
+BOOTSTRAP_PROFILE=minimal
+SITE_GUEST_UID=1001
+TEMPLATE_BASE_IMAGE_FINGERPRINT=base
+TEMPLATE_GUEST_ZSHRC_SHA256=zsh
+TEMPLATE_PROFILE_MANIFEST_SHA256=manifest
+TEMPLATE_PACKAGES_LAYER_SHA256=packages
+TEMPLATE_PROFILE_READER_SHA256=reader
+mkdir -p "$(dirname "$resume_receipt")"
+receipt_identity=$template_identity
+if [ "$scenario" = stale ]; then receipt_identity=$(printf '%064d' 2); fi
+printf '%s\n' "template_identity=$receipt_identity" base_image_fingerprint=base profile=trial-profile \
+    bootstrap_profile=minimal guest_uid=1001 guest_zshrc_sha256=zsh profile_manifest_sha256=manifest \
+    packages_layer_sha256=packages profile_reader_sha256=reader builder_name=as-build-test \
+    template_name=trial-template snapshot=sealed template_ipv4=dynamic template_status=STOPPED \
+    protection_delete=true result=pending result=passed > "$resume_receipt"
+stat() { [ "$*" = "-c %U:%G:%a $resume_receipt" ] && echo root:root:600; }
+metadata() { echo "user.trial.$1"; }
+fail() { echo "$*" >&2; exit 74; }
+incus() {
+    case "$*" in
+        'info as-build-test') echo 'Status: STOPPED' ;;
+        'config show as-build-test') printf 'profiles:\n- trial-profile\n' ;;
+        'config show as-build-test/sealed')
+            printf 'devices:\n  eth0:\n    type: nic\n'
+            if [ "$scenario" = snapshot-address ]; then echo '    ipv4.address: example'; fi ;;
+        'config get as-build-test user.trial.template-build-identity') echo "$receipt_identity" ;;
+        'config get as-build-test volatile.base_image') echo base ;;
+        'config get as-build-test security.protection.delete')
+            if [ "$scenario" = unprotected ]; then echo false; else echo true; fi ;;
+        'config get as-build-test/sealed user.trial.template-receipt')
+            case "$scenario" in
+                no-snapshot) return 1 ;;
+                foreign-snapshot) echo other-receipt ;;
+                *) echo "$resume_receipt" ;;
+            esac ;;
+        'config get as-build-test user.trial.template-receipt') echo "$resume_receipt" ;;
+        'config get trial-template user.trial.template-receipt') echo competing-receipt ;;
+        'config get as-build-test'*' user.trial.template-identity') echo "$template_identity" ;;
+        'config get as-build-test'*' user.trial.bootstrap-profile') echo minimal ;;
+        'config get as-build-test'*' user.trial.profile-manifest-sha256') echo manifest ;;
+        'config get as-build-test'*' user.trial.instance-ipv4') ;;
+        'config device get as-build-test eth0 ipv4.address')
+            if [ "$scenario" = address ]; then echo example; fi ;;
+        'move as-build-test trial-template')
+            if [ "$scenario" = collision ]; then return 1; fi
+            echo publish >> "$WORK/recovery-operations" ;;
+        *) echo "unexpected recovery command: $*" >&2; exit 99 ;;
+    esac
+}
+. "$WORK/publish.sh"
+. "$WORK/recover.sh"
+exit 98
+DRIVER
+for scenario in recovered stale no-snapshot foreign-snapshot unprotected address snapshot-address collision; do
+    : > "$WORK/recovery-operations"
+    status=0
+    scenario=$scenario sh "$WORK/recover-driver.sh" > "$WORK/recover-log" 2>&1 || status=$?
+    if [ "$scenario" = recovered ]; then
+        [ "$status" -eq 0 ] && [ "$(cat "$WORK/recovery-operations")" = publish ] ||
+            die "sealed recovery failed: $(cat "$WORK/recover-log")"
+    else
+        [ "$status" -eq 74 ] && [ ! -s "$WORK/recovery-operations" ] ||
+            die "$scenario recovery returned $status: $(cat "$WORK/recover-log")"
     fi
 done
 
