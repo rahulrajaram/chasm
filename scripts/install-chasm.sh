@@ -107,8 +107,9 @@ fi
 INSTALLED_SITE_CONF=/etc/chasm/site.conf
 INSTALL_LIB=/usr/local/lib/chasm
 INSTALL_PROVISION=$INSTALL_LIB/provision
-INSTALL_GO=/usr/local/libexec/chasm
+INSTALL_GO=/usr/local/sbin
 INSTALL_OLD_GO=$INSTALL_LIB/go
+INSTALL_INTERIM_GO=/usr/local/libexec/chasm
 INSTALL_BIN=/usr/local/bin
 INSTALL_FIREWALL_HELPER=/usr/local/sbin/chasm-firewall
 INSTALL_FIREWALL_TEMPLATE=/etc/chasm/firewall.nft.template
@@ -122,6 +123,14 @@ INSTALL_SITE_HOST_LIB=$INSTALL_LIB/require-site-host.sh
 POOL_HEADROOM_GIB=10
 
 GO_BINARIES="chasm chasmctl executor_server supervisor_server"
+go_install_path() {
+    case $1 in
+        chasm|chasmctl) printf '%s/%s\n' "$INSTALL_BIN" "$1" ;;
+        executor_server) printf '%s/chasm-executor-server\n' "$INSTALL_GO" ;;
+        supervisor_server) printf '%s/chasm-supervisor-server\n' "$INSTALL_GO" ;;
+        *) fail "unknown Go binary: $1" ;;
+    esac
+}
 # Core's own reserved guest profile names: refreshed into the production
 # profile root only when absent (docs/plugins.md, upgrade semantics).
 CORE_PROFILE_NAMES="minimal"
@@ -383,19 +392,19 @@ drift_report() {
     fi
 
     for binary in $GO_BINARIES; do
-        check_exec "$INSTALL_GO/$binary" "control-plane binary"
+        installed_path=$(go_install_path "$binary")
+        check_exec "$installed_path" "control-plane binary"
         if [ -e "$INSTALL_OLD_GO/$binary" ] && [ ! -L "$INSTALL_OLD_GO/$binary" ]; then
             drift "legacy binary is not a compatibility symlink: $INSTALL_OLD_GO/$binary"
         else
-            check_symlink "$INSTALL_OLD_GO/$binary" "$INSTALL_GO/$binary" "legacy binary compatibility link"
+            check_symlink "$INSTALL_OLD_GO/$binary" "$installed_path" "legacy binary compatibility link"
         fi
+        check_symlink "$INSTALL_INTERIM_GO/$binary" "$installed_path" "interim binary compatibility link"
     done
-    check_symlink "$INSTALL_BIN/chasm" "$INSTALL_GO/chasm" "chasm CLI link"
     # chasm-clipboard is an optional plugin helper (docs/plugins.md). Core
     # does not build, install, or require it; a helper installed by an
     # earlier core release is left in place and keeps working through the
     # explicit `chasm-clipboard -- chasm shell NAME` invocation.
-    check_symlink "$INSTALL_BIN/chasmctl" "$INSTALL_GO/chasmctl" "chasmctl CLI link"
     if resolved_incus_socket=$(incus_socket_probe 2>/dev/null); then
         INCUS_SOCKET=$resolved_incus_socket
         export INCUS_SOCKET
@@ -411,10 +420,11 @@ drift_report() {
     fi
     if selinux_enforcing; then
         for binary in $GO_BINARIES; do
-            if selinux_bin_label "$INSTALL_GO/$binary"; then
-                ok "SELinux executable label bin_t: $INSTALL_GO/$binary"
+            installed_path=$(go_install_path "$binary")
+            if selinux_bin_label "$installed_path"; then
+                ok "SELinux executable label bin_t: $installed_path"
             else
-                drift "SELinux executable label is not bin_t: $INSTALL_GO/$binary (fix: restorecon -v $INSTALL_GO/$binary)"
+                drift "SELinux executable label is not bin_t: $installed_path (fix: restorecon -v $installed_path)"
             fi
         done
     else
@@ -441,13 +451,25 @@ drift_report() {
         server=${unit#chasm-}
         server=${server%.service}_server
         if [ -f "/etc/systemd/system/$unit" ] &&
-            check_service_executable "/etc/systemd/system/$unit" "$INSTALL_GO/$server"; then
+            check_service_executable "/etc/systemd/system/$unit" "$(go_install_path "$server")"; then
             ok "systemd executable path migrated: $unit"
         else
-            drift "systemd unit has an old or invalid executable path: $unit (expected /usr/local/libexec/chasm/)"
+            drift "systemd unit has an old or invalid executable path: $unit (expected $(go_install_path "$server"))"
         fi
     done
     check_file /etc/sudoers.d/chasm "sudoers fragment"
+    if [ -f /etc/sudoers.d/chasm ] && [ ! -L /etc/sudoers.d/chasm ] && am_root; then
+        if grep -Fqx "$SITE_OPERATOR_USER ALL=(root) NOPASSWD: /usr/local/bin/chasm __shell *" /etc/sudoers.d/chasm &&
+            grep -Fqx "$SITE_OPERATOR_USER ALL=(root) NOPASSWD: NOSETENV: /usr/local/bin/chasm __exec" /etc/sudoers.d/chasm &&
+            grep -Fqx "$SITE_OPERATOR_USER ALL=(root) NOPASSWD: NOSETENV: /usr/local/bin/chasm __doctor" /etc/sudoers.d/chasm &&
+            ! grep -Eq 'NOLOG_INPUT|NOLOG_OUTPUT' /etc/sudoers.d/chasm; then
+            ok "sudoers entry paths and portable tags verified"
+        else
+            drift "sudoers entry paths or tags differ from the installed CLI: /etc/sudoers.d/chasm"
+        fi
+    elif ! am_root; then
+        skip "sudoers entry content"
+    fi
     check_file /usr/lib/sysusers.d/chasm.conf "sysusers fragment"
     check_file /usr/lib/tmpfiles.d/chasm.conf "tmpfiles fragment"
 
@@ -769,25 +791,27 @@ check_service_executable() {
 }
 
 install_go_payload() {
-    # Publish compatibility and CLI links only after every executable has
+    # Publish compatibility links only after every executable has
     # been installed and checked under the host label policy.
     for binary in $GO_BINARIES; do
-        install -o root -g root -m 0755 "$1/$binary" "$INSTALL_GO/$binary" ||
-            fail "could not install $INSTALL_GO/$binary"
+        installed_path=$(go_install_path "$binary")
+        install -o root -g root -m 0755 "$1/$binary" "$installed_path" ||
+            fail "could not install $installed_path"
     done
     if selinux_enforcing; then
         command -v restorecon >/dev/null 2>&1 || fail "SELinux is enforcing but restorecon is unavailable"
         for binary in $GO_BINARIES; do
-            restorecon -F "$INSTALL_GO/$binary" || fail "could not restore the SELinux label: $INSTALL_GO/$binary"
-            selinux_bin_label "$INSTALL_GO/$binary" ||
-                fail "SELinux label is not bin_t after restorecon: $INSTALL_GO/$binary"
+            installed_path=$(go_install_path "$binary")
+            restorecon -F "$installed_path" || fail "could not restore the SELinux label: $installed_path"
+            selinux_bin_label "$installed_path" ||
+                fail "SELinux label is not bin_t after restorecon: $installed_path"
         done
     fi
     for binary in $GO_BINARIES; do
-        ln -sfn "$INSTALL_GO/$binary" "$INSTALL_OLD_GO/$binary"
+        installed_path=$(go_install_path "$binary")
+        ln -sfn "$installed_path" "$INSTALL_OLD_GO/$binary"
+        ln -sfn "$installed_path" "$INSTALL_INTERIM_GO/$binary"
     done
-    ln -sfn "$INSTALL_GO/chasm" "$INSTALL_BIN/chasm"
-    ln -sfn "$INSTALL_GO/chasmctl" "$INSTALL_BIN/chasmctl"
 }
 
 preflight() {
@@ -1043,7 +1067,7 @@ install_payload() {
         [ -f "$staging/$binary" ] || fail "the build did not produce $binary"
     done
 
-    install -d -o root -g root -m 0755 "$INSTALL_LIB" "$INSTALL_GO" "$INSTALL_OLD_GO" "$INSTALL_PROVISION" /etc/chasm
+    install -d -o root -g root -m 0755 "$INSTALL_LIB" "$INSTALL_GO" "$INSTALL_BIN" "$INSTALL_OLD_GO" "$INSTALL_INTERIM_GO" "$INSTALL_PROVISION" /etc/chasm
     if [ "$INCUS_SOCKET_EXPLICIT" -eq 1 ]; then
         incus_socket_probe >/dev/null || fail "INCUS_SOCKET must be an absolute path to an existing local Unix socket"
         printf '%s\n' "$INCUS_SOCKET" >"$staging/incus-socket"

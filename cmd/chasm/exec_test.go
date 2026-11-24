@@ -483,6 +483,9 @@ func TestExecTargetChecks(t *testing.T) {
 }
 
 func TestSudoersExecAndDoctorGrantsAreExact(t *testing.T) {
+	if selfPath != "/usr/local/bin/chasm" {
+		t.Fatalf("sudo re-exec path = %q, want /usr/local/bin/chasm", selfPath)
+	}
 	payload, err := os.ReadFile(filepath.Join(moduleRoot(), "host-config", "sudoers.d", "chasm.template"))
 	if err != nil {
 		t.Fatal(err)
@@ -497,7 +500,7 @@ func TestSudoersExecAndDoctorGrantsAreExact(t *testing.T) {
 		t.Fatalf("privileged sudo entries = %v", entries)
 	}
 	for _, test := range []struct{ verb, want string }{
-		{"__exec", "@OPERATOR_USER@ ALL=(root) NOPASSWD: NOSETENV: NOLOG_INPUT: NOLOG_OUTPUT: /usr/local/bin/chasm __exec"},
+		{"__exec", "@OPERATOR_USER@ ALL=(root) NOPASSWD: NOSETENV: /usr/local/bin/chasm __exec"},
 		{"__doctor", "@OPERATOR_USER@ ALL=(root) NOPASSWD: NOSETENV: /usr/local/bin/chasm __doctor"},
 	} {
 		found := false

@@ -22,6 +22,38 @@ func TestDoctorRootCommandOutputIsBounded(t *testing.T) {
 	}
 }
 
+func TestSELinuxChecksInstalledExecutablePaths(t *testing.T) {
+	want := []string{
+		"/usr/local/bin/chasm",
+		"/usr/local/bin/chasmctl",
+		"/usr/local/sbin/chasm-executor-server",
+		"/usr/local/sbin/chasm-supervisor-server",
+	}
+	var paths []string
+	checkSELinux(probes{
+		read: func(path string) ([]byte, error) {
+			if path != "/sys/fs/selinux/enforce" {
+				t.Fatalf("unexpected SELinux probe: %s", path)
+			}
+			return []byte("1\n"), nil
+		},
+		command: func(program string, args, settings []string) (string, error) {
+			if program != "/usr/bin/ls" || len(args) != 2 || args[0] != "-Z" || len(settings) != 0 {
+				t.Fatalf("unexpected label command: %s %v %v", program, args, settings)
+			}
+			paths = append(paths, args[1])
+			return "system_u:object_r:bin_t:s0 " + args[1], nil
+		},
+	}, func(id, status, summary, source, remedy string) {
+		if status != "ok" || source != want[len(paths)-1] {
+			t.Fatalf("unexpected SELinux result: %s %s %s", id, status, source)
+		}
+	})
+	if !reflect.DeepEqual(paths, want) {
+		t.Fatalf("checked paths = %v, want %v", paths, want)
+	}
+}
+
 type fakeInfo struct {
 	mode os.FileMode
 	gid  uint32

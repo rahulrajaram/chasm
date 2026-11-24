@@ -575,6 +575,7 @@ FUNCTIONS=$WORK/portability-functions.sh
     sed -n '/^check_host_distribution() {$/,/^}$/p' "$INSTALLER"
     sed -n '/^selinux_enforcing() {$/,/^}$/p' "$INSTALLER"
     sed -n '/^selinux_bin_label() {$/,/^}$/p' "$INSTALLER"
+    sed -n '/^go_install_path() {$/,/^}$/p' "$INSTALLER"
     sed -n '/^check_service_executable() {$/,/^}$/p' "$INSTALLER"
     sed -n '/^install_go_payload() {$/,/^}$/p' "$INSTALLER"
     sed -n '/^site_kernel_hostname() {$/,/^}$/p' "$ROOT/scripts/lib/require-site-host.sh"
@@ -609,16 +610,20 @@ chmod 0755 "$CAPABILITY_BIN/uname"
 [ "$(PATH="$CAPABILITY_BIN" site_kernel_hostname)" = unqualified-host ] ||
     die "kernel hostname resolution must not need hostname executable"
 
-INSTALL_GO=$WORK/libexec/chasm
+INSTALL_GO=$WORK/sbin
 INSTALL_OLD_GO=$WORK/lib/chasm/go
+INSTALL_INTERIM_GO=$WORK/libexec/chasm
 INSTALL_BIN=$WORK/bin
 BUILD_GO=$WORK/staged-go
 GO_BINARIES="chasm chasmctl executor_server supervisor_server"
-mkdir -p "$INSTALL_GO" "$INSTALL_OLD_GO" "$INSTALL_BIN" "$BUILD_GO"
+mkdir -p "$INSTALL_GO" "$INSTALL_OLD_GO" "$INSTALL_INTERIM_GO" "$INSTALL_BIN" "$BUILD_GO"
 for binary in $GO_BINARIES; do
     printf 'old %s\n' "$binary" >"$INSTALL_OLD_GO/$binary"
+    printf 'interim %s\n' "$binary" >"$INSTALL_INTERIM_GO/$binary"
     printf 'new %s\n' "$binary" >"$BUILD_GO/$binary"
 done
+ln -s "$INSTALL_INTERIM_GO/chasm" "$INSTALL_BIN/chasm"
+ln -s "$INSTALL_INTERIM_GO/chasmctl" "$INSTALL_BIN/chasmctl"
 # Stub privileged ownership flags while retaining ordinary copy/mode behavior.
 install() {
     [ "$#" -eq 8 ] && [ "$1" = -o ] && [ "$3" = -g ] && [ "$5" = -m ] ||
@@ -627,12 +632,13 @@ install() {
 }
 verify_payload_links() {
     for binary in $GO_BINARIES; do
-        [ "$(readlink "$INSTALL_OLD_GO/$binary")" = "$INSTALL_GO/$binary" ] ||
+        installed_path=$(go_install_path "$binary")
+        [ "$(readlink "$INSTALL_OLD_GO/$binary")" = "$installed_path" ] ||
             die "legacy $binary path did not migrate"
-        [ -x "$INSTALL_GO/$binary" ] || die "$binary did not install executable"
+        [ "$(readlink "$INSTALL_INTERIM_GO/$binary")" = "$installed_path" ] ||
+            die "interim $binary path did not migrate"
+        [ -x "$installed_path" ] && [ ! -L "$installed_path" ] || die "$binary did not install as a regular executable"
     done
-    [ "$(readlink "$INSTALL_BIN/chasm")" = "$INSTALL_GO/chasm" ] || die "CLI link did not migrate"
-    [ "$(readlink "$INSTALL_BIN/chasmctl")" = "$INSTALL_GO/chasmctl" ] || die "control CLI link did not migrate"
 }
 
 # Restrict command discovery to known tools to make SELinux absence deterministic.
@@ -660,24 +666,25 @@ install_go_payload "$BUILD_GO"
 verify_payload_links
 
 SELINUX_MODE=Enforcing
-rm "$INSTALL_OLD_GO/chasm" "$INSTALL_BIN/chasm"
+rm "$INSTALL_OLD_GO/chasm" "$INSTALL_INTERIM_GO/chasm"
 printf 'old chasm\n' >"$INSTALL_OLD_GO/chasm"
+printf 'interim chasm\n' >"$INSTALL_INTERIM_GO/chasm"
 if (install_go_payload "$BUILD_GO") >"$WORK/selinux.out" 2>&1; then
     die "enforcing SELinux accepted a drifted executable label"
 fi
 grep -q 'label is not bin_t' "$WORK/selinux.out" || die "label failure lacks a diagnostic"
-[ ! -L "$INSTALL_OLD_GO/chasm" ] && [ ! -e "$INSTALL_BIN/chasm" ] ||
+[ ! -L "$INSTALL_OLD_GO/chasm" ] && [ ! -L "$INSTALL_INTERIM_GO/chasm" ] ||
     die "migration published links before all executable labels were verified"
 SELINUX_TYPE=bin_t
 install_go_payload "$BUILD_GO"
 verify_payload_links
-selinux_bin_label "$INSTALL_GO/chasm" || die "known bin_t label did not verify"
+selinux_bin_label "$INSTALL_BIN/chasm" || die "known bin_t label did not verify"
 SELINUX_TYPE=usr_t
-if selinux_bin_label "$INSTALL_GO/chasm"; then die "drifted label passed verification"; fi
+if selinux_bin_label "$INSTALL_BIN/chasm"; then die "drifted label passed verification"; fi
 
 for server in executor supervisor; do
     UNIT=$ROOT/host-control/chasm-$server.service.template
-    command_path=/usr/local/libexec/chasm/${server}_server
+    command_path=/usr/local/sbin/chasm-${server}-server
     check_service_executable "$UNIT" "$command_path" || die "unit does not use migrated executable: $UNIT"
     printf '# ExecStart=%s\nExecStart=/usr/local/lib/chasm/go/%s_server\n' "$command_path" "$server" >"$WORK/stale-unit"
     if check_service_executable "$WORK/stale-unit" "$command_path"; then

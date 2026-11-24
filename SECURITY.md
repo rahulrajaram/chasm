@@ -113,7 +113,11 @@ own files to `/shared` or send them over the network.
    Both verify the operator and site identity and run as the configured
    unprivileged guest UID/GID. Exec also validates target ownership and
    requires the local Incus socket peer to be UID 0. The sudo grant disables
-   its I/O logging for exec. Chasm's separate mode-0600
+   `NOPASSWD` and `NOSETENV` are supported by both sudo and sudo-rs. Classic
+   sudo may still apply `log_output` or `use_pty`; in that case its changed
+   stdio causes the exec helper to refuse the request before reading it
+   unless stdin and stdout are both FIFOs (`cmd/chasm/exec.go`,
+   `runPrivilegedExec`). Chasm's separate mode-0600
    `/var/lib/chasm/executor/exec-audit.jsonl` records argv0, the argument
    count and digest, cwd, environment key names, and execution status.
    It excludes argument tails, environment values, and stream payloads.

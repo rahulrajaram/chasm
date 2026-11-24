@@ -173,10 +173,11 @@ In order, one approval per step:
 4. **Identity pin**: writes this machine's fingerprint to
    `/etc/chasm/site-host-id` (root 0444, create-once). Every later
    privileged entry verifies the host against this pin.
-5. **Payload install**: builds the Go binaries and installs them under
-   `/usr/local/libexec/chasm/` (SELinux enforcing hosts run `restorecon`
-   and verify `bin_t` labels), symlinks `chasm` and
-   `chasmctl` into `/usr/local/bin/`, copies the provision tree (scripts,
+5. **Payload install**: builds the Go binaries and installs `chasm` and
+   `chasmctl` in `/usr/local/bin/` and the service executables in
+   `/usr/local/sbin/` (SELinux enforcing hosts run `restorecon` and verify
+   `bin_t` labels). It keeps compatibility links in both older payload
+   directories, then copies the provision tree (scripts,
    host and guest configuration) under
    `/usr/local/lib/chasm/provision/`, installs the core profile manifest
    into `/etc/chasm/profiles/` (only when absent; see
@@ -262,9 +263,9 @@ reservation: the file only grows as sandboxes actually use space.
 | ---- | ------ |
 | Users | One system user for the supervisor (`chasm-supervisor` by default, via the sysusers fragment), home under `/var/lib/chasm/supervisor`, no login shell |
 | Configuration | `/etc/chasm/site.conf` (the site descriptor) and the identity marker `/etc/chasm/site-host-id` |
-| Binaries | `/usr/local/lib/chasm/` (binaries, provision tree) and symlinks in `/usr/local/bin/` |
+| Binaries | `/usr/local/bin/chasm` and `chasmctl` (operator CLIs and sudo entry helper); `/usr/local/sbin/chasm-executor-server` and `chasm-supervisor-server` (system services); `/usr/local/lib/chasm/provision/` (provision tree); compatibility links under `/usr/local/lib/chasm/go/` and `/usr/local/libexec/chasm/` |
 | systemd units | `chasm-executor.service` + `.socket` (root), `chasm-supervisor.service` + `.socket` (unprivileged), `chasm-firewall.service` — all enabled |
-| sudo | `/etc/sudoers.d/chasm` — grants the operator exactly the internal `chasm __shell` entry helper used by `chasm shell` |
+| sudo | `/etc/sudoers.d/chasm` — grants the operator the narrow `chasm __shell`, `__exec`, and `__doctor` entries through `/usr/local/bin/chasm` |
 | Firewall | `/usr/local/sbin/chasm-firewall` and `/etc/chasm/firewall.nft.template`; manages the `inet chasm` nftables table and bridge-scoped `iptables` accepts in `INPUT`/`FORWARD` when available; Docker rules are not rewritten |
 | Incus | Storage pool (`chasm`), NAT bridge (`chasmbr0`), sandbox profile (`chasm`), and the sealed template instance; every site-owned Incus object is named from the descriptor's `resource_prefix` (default `chasm`): instance metadata keys `user.<prefix>.*`, the `<prefix>-shared` and `<prefix>-workspace-<instance>` volumes, and the `<prefix>-template-*` instances |
 | sshd | with `--harden-ssh` only: `/etc/ssh/sshd_config.d/00-chasm.conf` and `99-chasm.conf` (off by default) |

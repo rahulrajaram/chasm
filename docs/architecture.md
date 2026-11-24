@@ -42,6 +42,13 @@ operator
   UID. It opens separate non-interactive WebSocket streams for stdin,
   stdout, stderr, and signal control. Exec stays outside the serial
   lifecycle request loop and uses eight independent, file-locked slots.
+- **Installed executables** — `/usr/local/bin/chasm` and `chasmctl` are
+  operator CLIs; sudo re-execs `/usr/local/bin/chasm` for the exact internal
+  entries. systemd starts `/usr/local/sbin/chasm-executor-server` and
+  `/usr/local/sbin/chasm-supervisor-server`. SELinux enforcing hosts verify
+  `bin_t` on these installed files after `restorecon`. Older payload paths
+  under `/usr/local/lib/chasm/go/` and `/usr/local/libexec/chasm/` are
+  compatibility links, not systemd entry points.
 - **`cmd/chasmctl`** — the operator-level CLI over the supervisor.
   JSON by default.
 - **`cmd/executor_server`** (`chasm-executor.service`, **root**) —

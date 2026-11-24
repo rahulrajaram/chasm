@@ -81,6 +81,17 @@ die() {
     exit 1
 }
 
+# Re-provisioning must render the same executable paths as a fresh install.
+grep -qx 'ExecStart=/usr/local/sbin/chasm-executor-server' \
+    "$ROOT/host-control/chasm-executor.service.template" || die "executor service path changed"
+grep -q '^ExecStart=/usr/local/sbin/chasm-supervisor-server ' \
+    "$ROOT/host-control/chasm-supervisor.service.template" || die "supervisor service path changed"
+grep -qx '@OPERATOR_USER@ ALL=(root) NOPASSWD: NOSETENV: /usr/local/bin/chasm __exec' \
+    "$ROOT/host-config/sudoers.d/chasm.template" || die "sudo exec path or tags changed"
+if grep -Eq 'NOLOG_INPUT|NOLOG_OUTPUT' "$ROOT/host-config/sudoers.d/chasm.template"; then
+    die "sudo-rs incompatible sudoers tags"
+fi
+
 # shellcheck source=scripts/lib/host-resources.sh
 . "$LIB"
 

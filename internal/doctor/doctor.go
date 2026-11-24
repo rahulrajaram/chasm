@@ -292,7 +292,13 @@ func checkSELinux(p probes, add addCheck) {
 		return
 	}
 	for _, binary := range []string{"chasm", "chasmctl", "executor_server", "supervisor_server"} {
-		binaryPath := "/usr/local/libexec/chasm/" + binary
+		binaryPath := "/usr/local/bin/" + binary
+		switch binary {
+		case "executor_server":
+			binaryPath = "/usr/local/sbin/chasm-executor-server"
+		case "supervisor_server":
+			binaryPath = "/usr/local/sbin/chasm-supervisor-server"
+		}
 		output, err := p.command("/usr/bin/ls", []string{"-Z", binaryPath}, nil)
 		fields := strings.Fields(output)
 		switch {
