@@ -638,7 +638,25 @@ incus_socket_probe() {
 incus_agent_probe() {
     incus_agent_path=$(command -v incus-agent || true)
     [ -z "$incus_agent_path" ] || return 0
-    [ "$#" -gt 0 ] || set -- /usr/libexec/incus/incus-agent /usr/lib/incus/incus-agent /usr/libexec/incus-agent
+    if [ "$#" -eq 0 ]; then
+        agent_arch=$(uname -m 2>/dev/null || true)
+        case "$agent_arch" in
+            x86_64) ;;
+            aarch64) ;;
+            *) agent_arch= ;;
+        esac
+        set -- /usr/libexec/incus/incus-agent /usr/lib/incus/incus-agent /usr/libexec/incus-agent
+        if [ -n "${INCUS_AGENT_PATH:-}" ]; then
+            set -- "$@" "$INCUS_AGENT_PATH/incus-agent"
+            [ -z "$agent_arch" ] || set -- "$@" "$INCUS_AGENT_PATH/incus-agent.linux.$agent_arch"
+        fi
+        if [ -n "$agent_arch" ]; then
+            set -- "$@" \
+                "/usr/lib/incus/agents/incus-agent.linux.$agent_arch" \
+                "/usr/libexec/incus/agents/incus-agent.linux.$agent_arch" \
+                "/usr/share/incus/agents/incus-agent.linux.$agent_arch"
+        fi
+    fi
     for agent_candidate do
         if [ -f "$agent_candidate" ] && [ -x "$agent_candidate" ]; then
             incus_agent_path=$agent_candidate
@@ -653,6 +671,7 @@ go_version_at_least() {
 	minimum=$2
 	case "$actual" in go*) actual=${actual#go} ;; esac
 	awk -v actual="$actual" -v minimum="$minimum" 'BEGIN {
+	  sub(/[^0-9.].*$/, "", actual);
 	  na=split(actual,a,"."); nm=split(minimum,m,".");
 	  if (na<2 || na>3 || nm<2 || nm>3) exit 1;
 	  for (i=1;i<=na;i++) if (a[i] !~ /^[0-9]+$/) exit 1;

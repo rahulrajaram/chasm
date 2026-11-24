@@ -987,7 +987,7 @@ sed -n '/^incus_preflight_check() {/,/^}/p' "$INSTALLER" >"$WORK/incus-preflight
 grep -q '^incus_preflight_check() {' "$WORK/incus-preflight-fn.sh" ||
     die "incus_preflight_check extraction lost the function"
 sed -n '/^virtiofsd_probe() {/,/^}/p' "$INSTALLER" | sed "s|/usr/lib/virtiofsd|$WORK/absent-virtio-2|; s|/usr/lib/qemu/virtiofsd|$WORK/absent-virtio-3|" >"$WORK/incus-probe-fn.sh"
-sed -n '/^incus_agent_probe() {/,/^}/p' "$INSTALLER" | sed "s|/usr/libexec/incus/incus-agent|$WORK/absent-agent-1|; s|/usr/lib/incus/incus-agent|$WORK/absent-agent-2|; s|/usr/libexec/incus-agent|$WORK/absent-agent-3|" >>"$WORK/incus-probe-fn.sh"
+sed -n '/^incus_agent_probe() {/,/^}/p' "$INSTALLER" | sed "s|/usr/libexec/incus/incus-agent|$WORK/absent-agent-1|; s|/usr/lib/incus/incus-agent|$WORK/absent-agent-2|; s|/usr/libexec/incus-agent|$WORK/absent-agent-3|; s|/usr/lib/incus/agents|$WORK/agents-usrlib|; s|/usr/libexec/incus/agents|$WORK/agents-usrlibexec|; s|/usr/share/incus/agents|$WORK/agents-usrshare|" >>"$WORK/incus-probe-fn.sh"
 grep -q '^virtiofsd_probe() {' "$WORK/incus-probe-fn.sh" ||
     die "virtiofsd_probe extraction lost the function"
 sed -n '/^install_incus_step() {/,/^}/p' "$INSTALLER" >"$WORK/incus-step-fn.sh"
@@ -1163,10 +1163,40 @@ sed -n '/^go_version_at_least() {/,/^}/p' "$INSTALLER" >"$WORK/portability-go.sh
 (
     # shellcheck disable=SC1090
     . "$WORK/portability-go.sh"
-    go_version_at_least go1.23.0 1.23 && go_version_at_least go1.100.1 1.23 || die "Go minimum rejected a supported version"
-    if go_version_at_least go1.22.99 1.23 || go_version_at_least go1.24rc1 1.23; then
-        die "Go minimum accepted an old or prerelease version"
+    go_version_at_least go1.23.0 1.23 && go_version_at_least go1.100.1 1.23 &&
+        go_version_at_least go1.27.4-X:nodwarf5 1.23 && go_version_at_least go1.24rc1 1.23 ||
+        die "Go minimum rejected a supported version or suffix"
+    if go_version_at_least go1.22.99 1.23 || go_version_at_least go1.22rc1 1.23 ||
+        go_version_at_least garbage 1.23 || go_version_at_least go 1.23; then
+        die "Go minimum accepted an old, empty, or garbage version"
     fi
+)
+(
+    # shellcheck disable=SC1090
+    . "$WORK/incus-probe-fn.sh"
+    mkdir -p "$WORK/agents-usrlib" "$WORK/agent-path" "$WORK/incus-agent-bin"
+    cat >"$WORK/incus-agent-bin/uname" <<'EOF'
+#!/bin/sh
+printf '%s\n' x86_64
+EOF
+    /bin/chmod +x "$WORK/incus-agent-bin/uname"
+    # shellcheck disable=SC2123
+    PATH=$WORK/incus-agent-bin
+    printf '#!/bin/sh\nexit 0\n' >"$WORK/agents-usrlib/incus-agent.linux.x86_64"
+    /bin/chmod +x "$WORK/agents-usrlib/incus-agent.linux.x86_64"
+    incus_agent_path=
+    unset INCUS_AGENT_PATH
+    incus_agent_probe &&
+        [ "$incus_agent_path" = "$WORK/agents-usrlib/incus-agent.linux.x86_64" ] ||
+        die "Incus architecture-specific agents directory was not detected"
+    /bin/rm -f "$WORK/agents-usrlib/incus-agent.linux.x86_64"
+    printf '#!/bin/sh\nexit 0\n' >"$WORK/agent-path/incus-agent.linux.x86_64"
+    /bin/chmod +x "$WORK/agent-path/incus-agent.linux.x86_64"
+    INCUS_AGENT_PATH=$WORK/agent-path
+    export INCUS_AGENT_PATH
+    incus_agent_path=
+    incus_agent_probe && [ "$incus_agent_path" = "$WORK/agent-path/incus-agent.linux.x86_64" ] ||
+        die "INCUS_AGENT_PATH architecture-specific agent was not detected"
 )
 (
     # shellcheck disable=SC1090
