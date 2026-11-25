@@ -29,6 +29,7 @@ git ls-files '*.sh' 'host-control/chasm-firewall' \
 scripts/check-site-profiles.sh
 scripts/check-descriptor-parity.sh
 scripts/check-portability.sh
+scripts/check-commit-identity.sh
 scripts/check-core-only.sh
 scripts/check-ci-coverage.sh
 scripts/test-install-modes.sh
