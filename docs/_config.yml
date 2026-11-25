@@ -2,6 +2,11 @@
 title: chasm
 description: "Persistent Linux VMs for coding agents, on your own machine."
 lang: en
+logo: /assets/logo-512.png
+
+# Link previews (Open Graph / Twitter cards) for every page.
+twitter:
+  card: summary_large_image
 
 # Project site served at https://rahulrajaram.github.io/chasm/
 url: "https://rahulrajaram.github.io"
@@ -31,6 +36,12 @@ defaults:
       type: pages
     values:
       layout: guide
+      image:
+        path: /assets/social-card.png
+        width: 1200
+        height: 630
+        alt: "chasm: Long-horizon VMs for long-horizon agents"
+
 
 exclude:
   - Gemfile

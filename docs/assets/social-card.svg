@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#FFFFFF"/>
+  <g transform="translate(96 175) scale(4.375)"><rect width="64" height="64" rx="17" fill="#FACC15"/><path d="M44 20A17 17 0 1 0 44 44" fill="none" stroke="#0A0A0A" stroke-width="9" stroke-linecap="round"/><rect x="29" y="25.5" width="8" height="13" fill="#0A0A0A"/></g>
+  <text x="420" y="318" font-family="Inter" font-weight="800" font-size="150" letter-spacing="-4" fill="#0A0A0A">chasm</text>
+  <text font-family="Inter" font-weight="600" font-size="44" fill="#3F3F46"><tspan x="426" y="405">Long-horizon VMs</tspan><tspan x="426" y="463">for long-horizon agents</tspan></text>
+  <rect x="0" y="606" width="1200" height="24" fill="#FACC15"/>
+</svg>

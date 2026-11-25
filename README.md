@@ -1,3 +1,5 @@
+<p><img src="docs/assets/logo.svg" width="96" height="96" alt="chasm logo"></p>
+
 # chasm
 
 Chasm runs persistent Linux VMs for long-running coding agents on your
