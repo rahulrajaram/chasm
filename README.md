@@ -37,8 +37,8 @@ to use it directly. Each sandbox gets:
 - Version 0.1.0. This is pre-1.0 software: commands and configuration may
   change without notice.
 - One maintainer.
-- x86_64 only. Tested on Debian 13 (trixie); Debian 12 (bookworm) is
-  untested.
+- x86_64 only. Tested on Debian 13 (trixie), Ubuntu 26.04 and Ubuntu
+  24.04; Debian 12 (bookworm) is untested.
 - This release installs no AI agents or model relay. The control plane
   (sandboxes, lifecycle, firewall) is the whole product;
   optional add-ons such as the clipboard bridge live under `plugins/`.

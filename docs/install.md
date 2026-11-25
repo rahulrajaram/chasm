@@ -4,8 +4,8 @@ permalink: /install.html
 ---
 # Installing chasm
 
-These instructions provision a fresh Debian (x86_64) host — tested on
-Debian 13; Debian 12 is untested. The installer is
+These instructions provision a fresh Debian or Ubuntu (x86_64) host — tested
+on Debian 13, Ubuntu 26.04 and Ubuntu 24.04; Debian 12 is untested. The installer is
 `scripts/install-chasm.sh` in this repository; run it from a checkout.
 
 <pre><code class="language-sh"><span class="term-command">git</span> <span class="term-action">clone</span> <span class="term-url">https://github.com/rahulrajaram/chasm.git</span>
@@ -48,7 +48,11 @@ invocation therefore needs a root-owned checkout; when invoked through
 
 ## Requirements recap
 
-- Debian on x86_64 (tested on Debian 13; Debian 12 is untested).
+- Debian or Ubuntu on x86_64 (tested on Debian 13, Ubuntu 26.04 and
+  Ubuntu 24.04; Debian 12 is untested). On Ubuntu 24.04 the default
+  `golang-go` is 1.22, too old: install a versioned package such as
+  `golang-1.23-go` or newer and put its `go` on root's `PATH`, and install
+  `incus-agent` explicitly.
 - `/dev/kvm` present, and nested virtualization **disabled** (below).
 - systemd, nftables and iproute2. A fresh managed Btrfs pool needs
   `btrfs-progs`, and the managed Incus bridge needs `dnsmasq-base`.
