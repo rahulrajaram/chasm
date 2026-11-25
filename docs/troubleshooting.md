@@ -204,10 +204,12 @@ the desktop and application OSC 52 support; an intervening tmux must
 forward it (`set -s set-clipboard on`). Details in [clipboard.md](clipboard.md).
 
 **SQLite fails on `/workspace` or `/shared` in WAL mode**
-`/workspace` and `/shared` are virtiofs mounts. WAL mode is known to fail on
-these mounts; keep databases on the guest root disk (for example under
-`/home/agent`) or use `journal_mode=DELETE`. This applies to tools that embed
-SQLite, including indexers, caches, and agent state.
+`/workspace` and `/shared` are virtiofs mounts. On `/shared` with Incus
+6.0.4, SQLite `journal_mode=DELETE` worked, while `journal_mode=WAL` failed
+with `disk I/O error` on the first write. For either mount, use rollback
+journaling or keep the database on the guest root disk (for example under
+`/home/agent`). This applies to tools that embed SQLite, including indexers,
+caches, and agent state.
 
 **Verify reports "socket is not active"**
 The socket-activated executor or supervisor socket is down. Check

@@ -1125,11 +1125,12 @@ install_payload() {
 }
 
 # The sshd hardening and Incus acquisition steps are optional plugins
-# (docs/plugins.md). The dispatchers below are the ONLY paths from core to
-# plugin code: each runs only when the operator passed the matching flag,
-# sources the plugin from this tree, and fails clearly when the plugin is
-# absent. With no flag neither dispatcher touches sshd, apt, or any plugin
-# file. The hardening plugin's approval goes through approve_hardening:
+# (docs/plugins.md). The Incus acquisition dispatcher sources its plugin
+# only with --install-incus. The hardening dispatcher reads and sources the
+# ssh-hardening plugin when present even without --harden-ssh, but applies
+# hardening only with that flag. With neither flag, these dispatchers do not
+# change sshd or install packages. The hardening plugin's approval goes
+# through approve_hardening:
 # hardening can lock the operator out, so it is the one step
 # CHASM_ASSUME_YES does not pre-approve.
 

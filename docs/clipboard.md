@@ -21,17 +21,11 @@ desktop clipboard after the shell exits.
 
 ## Copy and paste
 
-- An application's copy action and application-owned mouse selection can write
-  to the desktop clipboard even in XFCE Terminal, which does not support OSC 52
-  itself. In a fullscreen application UI, releasing a left-button drag selection
-  typically triggers copy.
-- Ctrl+Shift+C still copies the terminal's own selection. When an application
-  captures mouse events, hold Shift while selecting to use terminal selection.
-  For terminal-owned selections to copy on release too, enable the terminal's
-  own copy-on-select preference (XFCE: `misc-copy-on-select`). Chasm cannot set
-  a universal selection preference for all terminal emulators.
-- Ctrl+Shift+V pastes through the terminal's normal input path. Bracketed paste
-  and multiline text pass through without rewriting.
+- Application OSC 52 text writes reach the desktop clipboard when the bridge
+  handles them. Mouse selection and terminal-owned copy behavior depend on
+  your terminal emulator.
+- Paste uses the terminal's normal input path; the bridge does not rewrite it.
+  Paste shortcuts and selection behavior depend on your terminal emulator.
 - X11's PRIMARY selection (normally pasted with the middle mouse button) is
   distinct from CLIPBOARD (normally pasted with Ctrl+Shift+V). The bridge honors
   explicit OSC 52 requests for either; applications normally write CLIPBOARD.

@@ -7,10 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
-First public release. chasm is a Go + POSIX sh host control plane that
-runs disposable, resource-bounded sandboxes as full Incus VMs on a
-Debian host (x86_64; tested on Debian 13, Debian 12 untested), behind a
-narrow root executor and an unprivileged supervisor.
+First public release. chasm is a Go + POSIX sh host control plane for
+persistent, resource-bounded Incus VMs, one per sandbox, behind a narrow
+root executor and an unprivileged supervisor. Stop and start keep each
+VM's root disk and `/workspace` volume; delete removes both. The release
+supports x86_64 hosts. Fresh installation and sandbox lifecycle were
+tested on Debian 13, Ubuntu 26.04 and 24.04, Fedora 45 with SELinux
+enforcing, and Arch Linux. Upgrades were tested on Debian 13 only;
+Debian 12 is untested. Provisioning on non-Debian hosts requires
+`--allow-untested-host` or `CHASM_ALLOW_UNTESTED_HOST=1`.
 
 ### Added
 
@@ -29,9 +34,18 @@ narrow root executor and an unprivileged supervisor.
   fit) and when a loop-backed pool's size exceeds what its loop file and
   backing free space could actually fill (idiom 4).
 - Operator CLI `chasm`: create, start, stop, pause, resume, delete,
-  show (details and observed filesystem layout), describe, repos, and
-  interactive shell; compatibility aliases `list`, `status`,
-  `inspect`, `layout`, and `locate`.
+  show (details, observed filesystem layout, and create/start/stop phase
+  timings), describe, repos, and interactive shell; compatibility aliases
+  `list`, `status`, `inspect`, `layout`, and `locate`.
+- `chasm exec` runs a foreground command in an initialized, running VM.
+  It preserves confirmed guest exit status and keeps stdin, stdout, and
+  stderr separate. `--cwd` sets the guest working directory, `--env`
+  passes named guest environment entries, and `--status-fd` writes a JSON
+  result on a separate descriptor. A guest status marker confirms exit
+  129 when Incus loses the terminal result; without confirmation, that
+  outcome remains unknown. Exec refuses a sandbox before initialization.
+- `chasm doctor [--json]` reports host and site checks without changing
+  the installation.
 - Operator CLI `chasmctl` over the supervisor: full sandbox lifecycle,
   repository discovery, and site operations.
 - Declared per-sandbox memory budgets (512 MiB floor, default 3072 MiB;
@@ -71,6 +85,12 @@ narrow root executor and an unprivileged supervisor.
   and opt-in Incus installation (`--install-incus`, off by default) from
   Debian's own repositories: the release's own packages on Debian 13
   (trixie) and newer, `bookworm-backports` on Debian 12 (bookworm).
+- The installer places the executor and supervisor service executables
+  under `/usr/local/sbin` and publishes compatibility links at the older
+  payload paths. Ordinary Incus socket lookup checks `INCUS_SOCKET`,
+  then the root-owned `/etc/chasm/incus-socket` setting, then
+  `/var/lib/incus/unix.socket` and `/run/incus/unix.socket`. The
+  privileged exec helper ignores the environment override.
 - Site descriptor `/etc/chasm/site.conf` with a pinned site identity
   marker; both descriptor readers fail closed on unknown or malformed
   keys. Set optional `profile_root_disk_gib` before first provisioning to
@@ -105,6 +125,16 @@ narrow root executor and an unprivileged supervisor.
 - The allocator excludes the configured gateway, and preflight detects
   overlapping main-table routes. Guest network configuration matches
   the Incus NIC by MAC address.
+
+### Known issues
+
+- Lifecycle commands (`create`, `start`, `stop`, `pause`, `resume`, and
+  `delete`) print JSON even when invoked through `chasm`; they have no
+  human renderer.
+- The supervisor socket uses `SocketGroup=@OPERATOR_USER@` and assumes
+  the operator has a same-named group.
+- Exec cancellation does not reach guest processes that leave the
+  command's process group, for example with `setsid`.
 
 ### Not included
 

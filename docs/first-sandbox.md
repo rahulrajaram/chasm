@@ -76,9 +76,11 @@ Inside the sandbox:
 - `/workspace` — this sandbox's persistent volume; explicit projects use
   `/workspace/<projectname>`.
 - `/shared` — the global volume shared by all sandboxes on the site.
-- SQLite WAL mode is known to fail on these virtiofs mounts: keep databases
-  on the guest root disk (for example under `/home/agent`) or use
-  `journal_mode=DELETE`; see
+- SQLite WAL mode fails on these virtiofs mounts. On `/shared` with Incus
+  6.0.4, `journal_mode=DELETE` worked, while `journal_mode=WAL` failed
+  with `disk I/O error` on the first write. For `/workspace` and
+  `/shared`, use rollback journaling or keep the database on the guest
+  root disk (for example under `/home/agent`); see
   [troubleshooting.md](troubleshooting.md).
 - The guest has the template's tool baseline: zsh and CA certificates from
   the core `minimal` bootstrap profile

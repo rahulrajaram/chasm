@@ -31,8 +31,9 @@ directory.
   (create the directory first on a fresh host), then either set
   `bootstrap_profile=developer-tools` in `/etc/chasm/site.conf` or pass the
   profile name to the template builder. For development and tests set
-  `CHASM_PROFILE_ROOT` to a directory containing the manifest. To combine
-  with the core set, install both templates and select per sandbox.
+  `CHASM_PROFILE_ROOT` to a directory containing the manifest. The site's
+  `bootstrap_profile` selects the profile used to build the template for
+  new sandboxes; selection is site-wide, not per sandbox.
 - The reader applies the same fail-closed rules to this manifest as to any
   core profile: safe name, regular non-symlink file, not group- or
   world-writable, owned by root or the invoking user, plain tokens only.

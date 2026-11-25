@@ -1,9 +1,10 @@
 # chasm
 
-chasm gives each untrusted workload its own virtual machine on a Linux
-host, holds it to a memory and CPU budget, and lets you throw the machine
-away when you are done. It is for Linux administrators and developers who
-want a repeatable, disposable place to run code, tools, or downloaded
+Chasm runs persistent Linux VMs for long-running coding agents on your
+own hardware. Each sandbox has its own kernel, memory and CPU budget,
+root disk, and `/workspace` volume. Stop and start the VM without losing
+its files; delete the sandbox when you are done. It gives Linux
+administrators and developers a place to run code, tools, or downloaded
 content they do not trust.
 
 ## Why a full VM per sandbox
