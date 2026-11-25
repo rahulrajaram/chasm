@@ -25,10 +25,10 @@ Chasm is not an alternative to KVM or QEMU; it runs on them. KVM is the hypervis
 | Fly.io Sprites | A hosted, hardware-isolated microVM per Sprite, with a persistent ext4 disk that is backed up to object storage when idle. | You want a persistent agent machine without running hardware: it sleeps when idle, wakes on a request to its HTTPS URL, and takes quick filesystem checkpoints. | Fly operates the hosts and storage; you decide what code and credentials to place in the Sprite and who can reach its URL. |
 | Fly Machines | Hosted VMs started from a container image through a REST API, placed in the regions you choose. | Deploy and scale applications that start in well under a second, with Fly's networking and optional volumes. | Fly operates the platform; you own the image, its secrets, and the exposure of each service. |
 
-## Is Chasm a self-hosted Fly.io?
+## Chasm and Fly.io
 
-No. Chasm overlaps with Sprites: both give an agent a persistent Linux VM
-that keeps its disk between sessions. It does not aim to replace Fly.io.
+Chasm overlaps with Sprites: both give an agent a persistent Linux VM
+that keeps its disk between sessions. Chasm does not aim to replace Fly.io.
 Fly Machines is an application platform with fast launches from container
 images, a request-driven proxy, and placement across regions; Chasm runs
 named machines on one host you control and has none of those.
