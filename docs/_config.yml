@@ -1,6 +1,6 @@
 # chasm docs — Jekyll config for GitHub Pages (publishing from /docs)
 title: chasm
-description: "Disposable Linux VMs for untrusted workloads on Debian."
+description: "Persistent Linux VMs for coding agents, on your own machine."
 lang: en
 
 # Project site served at https://rahulrajaram.github.io/chasm/

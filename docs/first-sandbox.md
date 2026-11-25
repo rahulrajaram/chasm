@@ -10,6 +10,11 @@ root, no direct Incus access. `chasm` refuses to run as root: run it as
 the operator account, without `sudo`; only `chasm shell` crosses a sudo
 grant, and it does so internally.
 
+<figure>
+  <a href="assets/diagrams/sandbox-lifecycle.svg"><img src="assets/diagrams/sandbox-lifecycle.svg" width="760" height="620" alt="A new sandbox starts stopped. start runs it, pause and resume freeze and unfreeze it, stop returns it to stopped, and delete works only on a stopped sandbox."></a>
+  <figcaption>One sandbox’s lifecycle, showing which commands each state accepts. <a href="assets/diagrams/sandbox-lifecycle.excalidraw" download>Download the editable Excalidraw diagram</a>.</figcaption>
+</figure>
+
 ## 1. Create
 
 ```sh
@@ -63,17 +68,20 @@ Inside the sandbox:
 - `/workspace` — this sandbox's persistent volume; explicit projects use
   `/workspace/<projectname>`.
 - `/shared` — the global volume shared by all sandboxes on the site.
-- SQLite in WAL mode does not work on either mount (they are virtiofs and
-  lack the shared-memory mapping WAL needs): keep databases on the guest's
-  own disk or use `journal_mode=DELETE`; see
+- SQLite WAL mode is known to fail on these virtiofs mounts: keep databases
+  on the guest root disk (for example under `/home/agent`) or use
+  `journal_mode=DELETE`; see
   [troubleshooting.md](troubleshooting.md).
 - The guest has the template's tool baseline: zsh and CA certificates from
   the core `minimal` bootstrap profile
   (`guest-config/profiles/minimal.profile`). The optional developer tools
   (git, curl, jq, Python 3 with venv and pip, sqlite3, tmux,
   universal-ctags, vim) are the `developer-tools` plugin profile
-  (`plugins/developer-tools`; see [plugins.md](plugins.md)) — install it
-  into the profile root and build a template from it when you want them.
+  (`plugins/developer-tools`; see [plugins.md](plugins.md)) — to use them,
+  install `developer-tools.profile` into `/etc/chasm/profiles` (root-owned,
+  0644), set `bootstrap_profile=developer-tools` in `/etc/chasm/site.conf`,
+  and rerun `install-chasm.sh --provision` to build that profile's sealed
+  template. Only sandboxes created afterwards get it.
 
 ### Set a git identity (developer-tools profile only)
 
@@ -112,14 +120,15 @@ chasm show research --layout   # observed filesystem, three levels deep
 chasm repos            # Git repositories seen across sandboxes
 ```
 
-Observation never starts a stopped sandbox: a running sandbox is read
-live, a stopped one reports its last saved observation.
+Observation never starts a stopped sandbox: a running sandbox is read live;
+a paused or stopped one returns its last saved observation, or reports that
+it has not been observed yet.
 
 ## 5. Pause or stop
 
 ```sh
 chasm pause research   # freeze the VM, preserving its running state
-chasm resume research  # continue exactly where it paused
+chasm resume research  # continue where it paused; also requests a best-effort guest clock resync
 chasm stop research    # ask the guest to shut down; state is kept on disk
 ```
 

@@ -14,7 +14,7 @@ Debian 13; Debian 12 is untested. The installer is
 
 ## Compact install
 
-Use this setup for one sandbox on a fresh Debian 13 x86_64 site that meets the [host requirements](#requirements-recap). Allow **18 GiB free** on the filesystem holding `/var/lib/incus`. The sandbox gets a **4 GiB root disk** within an **8 GiB storage pool**. The installer also checks for 10 GiB of host headroom.
+Use this setup for one sandbox on a fresh Debian 13 x86_64 site that meets the [host requirements](#requirements-recap). Allow **18 GiB free** on the filesystem holding `/var/lib/incus`. The sandbox gets a **4 GiB root disk** within an **8 GiB storage pool**. Preflight requires the 8 GiB pool plus a 10 GiB margin. The template build also refuses to start when the filesystem holding `/var/lib/incus` is less than 10% free (by `df` use percentage), so 18 GiB free may not be enough on a large, nearly full filesystem.
 
 1. From the trusted checkout, open `host-config/site.conf.example` in your editor **before the first provision**. Set the pool size and uncomment the guest disk setting. Leave the other settings at their defaults if the default network is available.
 
@@ -52,8 +52,11 @@ invocation therefore needs a root-owned checkout; when invoked through
 - `/dev/kvm` present, and nested virtualization **disabled** (below).
 - systemd, nftables and iproute2. A fresh managed Btrfs pool needs
   `btrfs-progs`, and the managed Incus bridge needs `dnsmasq-base`.
-- Incus and `virtiofsd` — install them yourself, or opt in to the
-  acquisition step with `--install-incus` during provisioning. That step
+- Incus with its VM guest agent (`incus-agent`), and `virtiofsd`. Some Incus
+  packagings ship the agent as a separate package that a minimal install can
+  leave out; the template build then fails with
+  `builder agent readiness timed out`. Install them yourself, or opt in
+  to the acquisition step with `--install-incus` during provisioning. That step
   uses Debian's own repositories: the release's repositories on Debian
   13 (trixie) and newer, or `bookworm-backports` on Debian 12 (bookworm;
   refused when no `bookworm-backports` source is configured).
@@ -65,10 +68,12 @@ invocation therefore needs a root-owned checkout; when invoked through
   and `qemu-system-modules-spice` too.
   The default Chasm profile enables UEFI Secure Boot. A container-capable
   Incus daemon can still lack a working VM driver.
-- A Go toolchain (1.23 or newer; the version pinned in `go.mod`) visible
-  to root (the control plane is built from this checkout during
-  provisioning). A private build cache is used when the environment supplies
-  neither a home directory nor a cache path.
+- A Go toolchain, 1.23 or newer (the `go` directive in `go.mod`), on root's
+  `PATH`; the control plane is built from this checkout during provisioning.
+  Preflight checks only that `go` exists, not its version, so an older
+  toolchain passes preflight and then fails at the payload build step. A
+  private build cache is used when the environment supplies neither a home
+  directory nor a cache path.
 - Internet access at provision time (the Debian package install and the
   base-image download).
 - Disk space for the selected pool. See [compact install](#compact-install) for the tested small-site settings.
@@ -105,8 +110,10 @@ install-chasm.sh [--help|--check|--provision|--verify] [--harden-ssh]
 
 - `--provision` — first-run installation. Every root step prompts for
   approval on the terminal before it runs; `CHASM_ASSUME_YES=1` in the
-  environment pre-approves every step. Re-runs resume: finished steps
-  are detected and skipped.
+  environment pre-approves every step. Re-runs resume. Completed steps such
+  as the descriptor write, the identity pin, Incus initialization and a
+  current template build are detected and skipped. The payload step rebuilds
+  and reinstalls on every run.
 - `--verify` — read-only identity, drift, and service-health report. This
   is the default when the script is run with no argument. It changes
   nothing; probes that need root are skipped with an explanation when run
@@ -168,10 +175,12 @@ In order, one approval per step:
 3. **Descriptor write (first provision only)**: copies
    `host-config/site.conf.example` to `/etc/chasm/site.conf` (root:root
    0644) and fills in the resolved `site_name` and `operator_user`; on a
-   re-run the existing descriptor is kept unchanged.
+   re-run the existing descriptor is kept, and only its `site_name` and
+   `operator_user` lines are rewritten with the resolved values.
 4. **Identity pin**: writes this machine's fingerprint to
-   `/etc/chasm/site-host-id` (root 0444, create-once). Every later
-   privileged entry verifies the host against this pin.
+   `/etc/chasm/site-host-id` (root 0444). The installer pins it once and
+   refuses a mismatch on later runs; runtime privileged entries verify the
+   host against it.
 5. **Payload install**: builds the Go binaries and installs them under
    `/usr/local/lib/chasm/go/`, symlinks `chasm` and
    `chasmctl` into `/usr/local/bin/`, copies the provision tree (scripts,
@@ -264,12 +273,14 @@ reservation: the file only grows as sandboxes actually use space.
 | systemd units | `chasm-executor.service` + `.socket` (root), `chasm-supervisor.service` + `.socket` (unprivileged), `chasm-firewall.service` — all enabled |
 | sudo | `/etc/sudoers.d/chasm` — grants the operator exactly the internal `chasm __shell` entry helper used by `chasm shell` |
 | Firewall | `/usr/local/sbin/chasm-firewall` and `/etc/chasm/firewall.nft.template`; manages the `inet chasm` nftables table and bridge-scoped `iptables` accepts in `INPUT`/`FORWARD` when available; Docker rules are not rewritten |
-| Incus | Storage pool (`chasm`), NAT bridge (`chasmbr0`), sandbox profile (`chasm`), and the sealed template instance; every site-owned Incus object is named from the descriptor's `resource_prefix` (default `chasm`): instance metadata keys `user.<prefix>.*`, the `<prefix>-shared` and `<prefix>-workspace-<instance>` volumes, and the `<prefix>-template-*` instances |
+| Incus | Storage pool (`storage_pool`, default `chasm`), NAT bridge (`bridge_name`, default `chasmbr0`), sandbox profile (`profile_name`, default `chasm`), base image alias (`base_image_alias`, default `chasm-debian-13`), and the sealed template instance. `resource_prefix` (default `chasm`) names the instance metadata keys `user.<prefix>.*`, the `<prefix>-shared` and `<prefix>-workspace-<instance>` volumes, and the `<prefix>-template-*` instances. Sandbox instances are always named `sandbox-<name>`. On first initialization the preseed also empties the Incus `default` profile and sets `images.auto_update_interval` to `0`. |
 | sshd | with `--harden-ssh` only: `/etc/ssh/sshd_config.d/00-chasm.conf` and `99-chasm.conf` (off by default) |
 | Temporary/runtime | sysusers and tmpfiles fragments under `/usr/lib/sysusers.d/` and `/usr/lib/tmpfiles.d/`; state under `/var/lib/chasm/`; sockets under `/run/` |
 
-Beyond installing the Incus and virtiofsd packages (step 2), nothing
-else on the host is modified. Removing everything is covered in
+Beyond installing the Incus and virtiofsd packages (step 2) and the Incus
+server changes in the table above, nothing else on the host is modified. On a
+host that already runs Incus workloads, note that the first initialization
+empties the `default` profile. Removing everything is covered in
 [upgrade-and-uninstall.md](upgrade-and-uninstall.md).
 
 ## Verifying an installed site
@@ -278,10 +289,14 @@ else on the host is modified. Removing everything is covered in
 sudo scripts/install-chasm.sh --verify
 ```
 
-The drift report checks the descriptor, the identity pin, every binary,
-unit, socket, and fragment, the Incus pool, bridge, profile, and sealed
-template (including template staleness against the current tree), the
-nftables table, and — when run as root — the sshd hardening fragments:
+The drift report validates the descriptor and the identity pin. It checks
+that each installed binary, provision-tree marker, unit and fragment is
+present and that executables are executable. It checks that the CLI symlinks
+point at the installed binaries and that both sockets and the firewall service
+are active. It checks the Incus pool, the bridge (its IPv4 address and disabled
+IPv6), the profile and the sealed template, including staleness against the
+installed provision tree. It also checks the nftables table and its leading
+IPv6 drops and, when run as root, the sshd hardening fragments:
 absent fragments are reported as `ssh hardening: not applied (optional)`
 (hardening is opt-in, so their absence is not drift), present fragments
 are verified against the shipped content, and any foreign drop-in that
@@ -290,7 +305,13 @@ while a chasm fragment is installed (OpenSSH's first-value rule means
 such a fragment wins); with the hardening not applied there is nothing
 to override, so the foreign winner is only an informational note. An
 unprivileged run skips that probe. The installed copy under
-`/usr/local/lib/chasm/provision/scripts/` works the same way after the
-checkout is gone.
+`/usr/local/lib/chasm/provision/scripts/` runs the same checks after the
+checkout is gone, except this one. The installed tree does not include
+`plugins/`, so it skips the probe with `ssh-hardening plugin not present`.
+Run `--verify` from a trusted checkout that contains `plugins/ssh-hardening`
+to check the fragments.
+
+It does not compare installed binaries or unit files byte-for-byte with the
+checkout.
 
 Next: [first-sandbox.md](first-sandbox.md).

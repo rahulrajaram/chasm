@@ -17,7 +17,9 @@ installation and any site data you choose to delete.
    sudo scripts/install-chasm.sh --provision
    ```
 
-   Provisioning is resumable: unchanged steps are detected and skipped.
+   Provisioning is resumable. Completed steps such as the descriptor write,
+   the identity pin, Incus initialization and a current template build are
+   detected and skipped. The payload step always runs again.
    The re-run rebuilds the Go binaries, refreshes the provision tree
    under `/usr/local/lib/chasm/provision/`, re-renders the units, and rewrites the
    firewall template. It reloads the active firewall to apply the
@@ -26,11 +28,17 @@ installation and any site data you choose to delete.
    margin plus the room the pool can still grow into, and the site
    bridge's own route into the sandbox prefix is accepted.
 
-2. Watch the drift report's template probe. The sealed template carries
-   a versioned identity digest over the builder, the bootstrap profile,
-   and every layer script — so after a change to the tree, the old
-   template is reported **stale** even though its name still matches,
-   and provisioning offers to rebuild it.
+2. Watch the drift report's template probe. The sealed template carries a
+   versioned identity digest over its inputs: the builder and identity scripts,
+   the package layer and profile reader, the guest `zshrc`, the base image
+   fingerprint, the Incus profile, the descriptor's `guest_uid` and
+   `resource_prefix`, and the installed bootstrap profile manifest. When an
+   upgrade changes any of these, the old template is reported **stale** even
+   though its name prefix still matches, and provisioning offers to rebuild
+   it. Other tree changes do not make it stale. An upgrade keeps an installed
+   core manifest under `/etc/chasm/profiles/` that differs from the release's,
+   so a manifest change in the release alone does not trigger a rebuild (see
+   [plugins.md](plugins.md)).
 
 3. Rebuild the template when offered. A rebuild runs beside running
    sandboxes (the builder never stops or touches them): it is admitted
@@ -55,9 +63,11 @@ installation and any site data you choose to delete.
 
    Zero drift is the target state after any upgrade.
 
-The site descriptor at `/etc/chasm/site.conf` is never overwritten by a
-re-run; when a release changes the descriptor schema (reported in the
-[changelog](../CHANGELOG.md)), edit the file by hand — both readers fail
+A re-run keeps the installed site descriptor at `/etc/chasm/site.conf` instead
+of copying the example again; it only rewrites the `site_name` and
+`operator_user` lines with their resolved values. When a release changes the
+descriptor schema (reported in the
+[changelog](https://github.com/rahulrajaram/chasm/blob/main/CHANGELOG.md)), edit the file by hand — both readers fail
 closed on unknown keys, so stale keys must be removed for the site to
 come up.
 
@@ -92,8 +102,10 @@ systemctl disable --now chasm-executor.socket \
 incus --force-local list --project default
 incus --force-local storage volume list chasm --project default
 
-# after checking a stopped sealed template belongs to this site,
-# replace TEMPLATE with its exact name and remove its delete protection
+# list every sealed template this site owns, including older identities
+incus --force-local list --project default --format csv -c n | grep '^chasm-template-'
+# for each one confirmed to belong to this site and safe to discard, replace
+# TEMPLATE with its exact name, remove its delete protection, and delete it
 incus --force-local config set TEMPLATE security.protection.delete=false --project default
 incus --force-local delete TEMPLATE --project default
 
@@ -101,12 +113,15 @@ incus --force-local delete TEMPLATE --project default
 incus --force-local storage volume delete chasm chasm-shared --project default
 incus --force-local profile delete chasm --project default
 incus --force-local network delete chasmbr0 --project default
+# the imported base image (base_image_alias); keep it if you supplied the alias yourself or other workloads use it
+incus --force-local image delete chasm-debian-13 --project default
 incus --force-local storage delete chasm --project default
 
 # remove host files
 rm -f  /etc/systemd/system/chasm-{executor,supervisor}.service \
        /etc/systemd/system/chasm-{executor,supervisor}.socket \
        /etc/systemd/system/chasm-firewall.service
+systemctl daemon-reload
 rm -f  /etc/sudoers.d/chasm
 rm -f  /usr/lib/sysusers.d/chasm.conf \
        /usr/lib/tmpfiles.d/chasm.conf
@@ -123,9 +138,13 @@ rm -rf /etc/chasm                   # descriptor, identity marker, firewall temp
 userdel chasm-supervisor
 groupdel chasm-supervisor
 
-# optional: the sshd hardening drop-ins (installed only with --harden-ssh)
-rm -f /etc/ssh/sshd_config.d/00-chasm.conf \
-      /etc/ssh/sshd_config.d/99-chasm.conf && systemctl reload ssh
+# optional: the sshd hardening drop-ins (installed only with --harden-ssh).
+# Removing 00-chasm.conf also stops sshd reading ~/.ssh/authorized_keys-chasm;
+# move any keys you rely on into authorized_keys first.
+rm -f /etc/ssh/sshd_config.d/00-chasm.conf /etc/ssh/sshd_config.d/99-chasm.conf
+sshd -t && for unit in ssh.service sshd.service; do
+    systemctl is-active --quiet "$unit" && { systemctl reload "$unit"; break; }
+done   # with socket activation only, new connections use the new configuration
 ```
 
 Leaving the nftables `chasm` table behind is harmless once the bridge is

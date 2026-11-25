@@ -25,7 +25,7 @@ stores the text `--text`.
 
 | Command | Form |
 | ------- | ---- |
-| `create` | `chasm create NAME [BUDGET_MEMORY_MIB]` |
+| `create` | `chasm create NAME [BUDGET_MEMORY_MIB] [--memory MIB] [--cpu N]` |
 | `show` | `chasm show [NAME] [--layout]` |
 | `resize` | `chasm resize NAME [--memory SIZE] [--cpu N] [--root-disk SIZE]` |
 | `describe` | `chasm describe NAME [--set TEXT \| --clear]` |
@@ -37,7 +37,7 @@ stores the text `--text`.
 | `delete` | `chasm delete NAME` |
 | `shell` | `chasm shell [NAME]` |
 
-### `create NAME [BUDGET_MEMORY_MIB]`
+### `create NAME [BUDGET_MEMORY_MIB] [--memory MIB] [--cpu N]`
 
 Create a named sandbox from the sealed template. `NAME` is 1–32
 lowercase letters, digits, or hyphens (leading/trailing hyphens
@@ -55,6 +55,11 @@ own persistent `/workspace` volume plus the global `/shared` volume and
 is left stopped.
 
 #### Sandbox storage
+
+<figure>
+  <a href="assets/diagrams/storage-lifetimes.svg"><img src="assets/diagrams/storage-lifetimes.svg" width="760" height="470" alt="One Incus storage pool holds each sandbox’s root disk and /workspace volume, both removed by delete, and the site-wide /shared volume, which survives deletion."></a>
+  <figcaption>Where sandbox data lives and which delete removes. All three survive stop. <a href="assets/diagrams/storage-lifetimes.excalidraw" download>Download the editable Excalidraw diagram</a>.</figcaption>
+</figure>
 
 | Location | Who mounts it | What happens on delete |
 | --- | --- | --- |
@@ -74,16 +79,20 @@ copy its own files to `/shared` or send them over the network.
 
 ### `show [NAME] [--layout]`
 
-Show details for one sandbox, or the site's `default_sandbox` when the
-site descriptor declares one (NAME is required otherwise). `--layout`
-shows a filesystem observation bounded to three levels. Running
-sandboxes are observed live; stopped ones return the last saved
+`chasm show NAME` displays that sandbox's details and resources. With no NAME,
+`chasm show` displays the site's `default_sandbox` status, the site services,
+and host/pool information; without a `default_sandbox`, NAME is required.
+`--layout` requires NAME and shows a filesystem observation bounded to three
+levels. Running
+sandboxes are observed live; paused or stopped ones return the last saved
 observation or report that they have not yet been observed.
 
 After the detail fields, `show` prints a Resources section that reports
-each resource from every angle that can disagree (idiom 2). Every value
-names its source; a value chasm cannot observe is shown as `unknown`
-with the reason, never guessed or left out:
+each resource from every angle that can disagree (idiom 2). Every value names
+its source. When collection succeeds, a value chasm cannot observe is shown
+as `unknown` with the reason, never guessed. If collection fails as a whole,
+the Resources section prints `Resources unavailable (REASON)` instead of
+individual values:
 
 - **declared** — what chasm recorded in the sandbox's budget keys;
 - **enforced** — what Incus applies (`limits.memory`, `limits.cpu`, the
@@ -147,8 +156,10 @@ addresses a default sandbox). Instance and volumes are untouched.
 
 ### `stop [NAME]`
 
-Stop a sandbox without deleting persistent state: the guest is asked to
-shut down and the command waits for the stopped state.
+Stop a sandbox without deleting persistent state. It accepts a running or
+already-stopped sandbox; resume a paused sandbox first. Chasm asks the guest
+to shut down (60 seconds), falls back to a forced stop if that fails, and
+succeeds only after confirming the stopped state.
 
 ### `resize NAME [--memory SIZE] [--cpu N] [--root-disk SIZE]`
 
@@ -168,8 +179,11 @@ the sandbox runs — stop it first with `chasm stop NAME`.
   size.
 
 The changes apply in a fixed order (memory, CPU, root disk) and every
-change is proven by reading the applied value back. A failure part-way
-reports exactly which changes were applied and which were not. A memory
+change is proven by reading the applied value back. A failure after at least
+one resource has been applied names the resources applied and those not applied.
+Memory and CPU are each two writes (recorded budget, then enforced limit), so
+a failure inside one of those steps can leave its budget changed while its
+limit is not; check `chasm show NAME` before retrying. A memory
 resize also repairs drift: when the recorded budget and the enforced
 limit differ (for example after a change made outside chasm),
 `chasm resize NAME --memory X` brings both to X. Re-applying the same
@@ -202,7 +216,7 @@ terminal session. For remote hosts, run
 migration and map onto `chasm`, `show`, `show`, `show --layout`, and
 `repos` respectively. Each one prints its own usage line when given bad
 arguments. They work, but new scripts and documentation should use the
-preferred forms.
+preferred forms. `chasm help aliases` lists them.
 
 ## `chasmctl`
 
@@ -210,9 +224,11 @@ preferred forms.
 chasmctl [--supervisor-socket PATH] COMMAND ...
 ```
 
-`chasmctl` is the operator-level CLI over the supervisor. Output is
-JSON by default; `SANDBOXING_OUTPUT=human` switches to human-readable
-output (the `chasm` CLI sets this automatically when it delegates).
+`chasmctl` is the operator-level CLI over the supervisor. Output is JSON by
+default. `SANDBOXING_OUTPUT=human` (set automatically by `chasm` when it
+delegates) renders text for listing, description, repository, status,
+inspection, layout and resize results, and for all errors; other successful
+results stay JSON.
 Every command below talks to the supervisor over its Unix socket,
 `/run/chasm-supervisor.sock` by default; pass `--supervisor-socket PATH`
 to override it. As with `chasm`, `chasmctl help` and `chasmctl help
@@ -222,7 +238,7 @@ descriptor is missing or invalid still gets working help.
 Supervisor commands:
 
 ```
-create-sandbox INSTANCE [BUDGET_MEMORY_MIB]
+create-sandbox INSTANCE [BUDGET_MEMORY_MIB] [--cpu N]
 describe-sandbox INSTANCE
 set-sandbox-description INSTANCE DESCRIPTION
 list-sandboxes
@@ -244,9 +260,9 @@ stop-guest
 collect-performance PHASE
 ```
 
-The commands take Incus instance names (`sandbox-NAME`); `chasm`
-translates logical names to them automatically. `chasmctl help` prints
-the full synopsis table.
+Where a command takes `INSTANCE`, pass the Incus name `sandbox-NAME`;
+`chasm` translates logical names to it automatically. `chasmctl help`
+prints the full synopsis table.
 
 ## Process exit status
 

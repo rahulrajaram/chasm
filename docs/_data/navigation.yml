@@ -13,7 +13,7 @@ guides:
         url: /install.html
       - title: "Your first sandbox"
         url: /first-sandbox.html
-      - title: "Chasm compared with Incus, Docker, Firecracker, Vagrant and gVisor"
+      - title: "Chasm compared with other sandboxing tools"
         url: /comparison.html
   - section: Operating a site
     items:

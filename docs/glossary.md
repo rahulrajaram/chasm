@@ -8,20 +8,26 @@ permalink: /glossary.html
   `key=value` file that holds every host fact (bridge, storage pool,
   users, admission reserve). Copied from
   `host-config/site.conf.example` at provisioning; both descriptor
-  readers fail closed on unknown, missing, malformed, or contradictory
-  keys. The example file documents the full schema.
+  readers fail closed on unknown keys, missing required keys, malformed
+  values, or contradictory settings. The example file documents the full
+  schema and marks which keys are optional.
 - **Site identity pin** — the fingerprint written once to
-  `/etc/chasm/site-host-id` during provisioning. Every
-  privileged component re-verifies the host against it before acting.
+  `/etc/chasm/site-host-id` during provisioning. The executor verifies the
+  host against it when it starts; the privileged shell entry, the firewall
+  helper, the sandbox launcher, and the template builder verify it each time
+  they are invoked. Bootstrap and rendering steps that run before the pin
+  exists validate the descriptor instead.
 - **Sealed template** — the finished sandbox image built by
   `scripts/build-sandbox-template.sh` from a bootstrap profile: packages
-  installed, the guest account created, credential files scrubbed,
+  installed, the guest account created, credential files checked absent and history cleared,
   snapshot sealed. Every `chasm create` clones it; the template itself
   never runs as a sandbox.
-- **Template identity** — the versioned digest (currently v6) computed
-  over the builder script, the resolved profile manifest, the guest
-  zshrc, the site guest uid, and every layer script. Stored on the
-  template instance; a tree change produces a different identity, so
+- **Template identity** — the versioned digest (currently v6) computed over
+  the base image alias and fingerprint, the Incus profile name and contents,
+  the bootstrap profile name and resolved manifest, the resource prefix,
+  the site guest uid, the guest zshrc, the packages layer and profile reader
+  scripts, and the builder and identity-helper scripts and policies. Stored on the
+  template instance; a change to any of these inputs produces a different identity, so
   verification reports the old template as stale until it is rebuilt.
 - **Bootstrap profile** — the manifest (`guest-config/profiles/*.profile`,
   default `minimal`) naming the Debian packages a sealed template
@@ -52,12 +58,15 @@ permalink: /glossary.html
   host memory the admission gate never allocates to sandboxes or the
   template builder.
 - **Default sandbox** — `default_sandbox` in the site descriptor: the
-  sandbox `chasm` commands address when NAME is omitted. `chasm delete`
-  always requires an explicit NAME.
+  sandbox `chasm shell`, `start`, `stop`, and `show` without `--layout` (and
+  the `status` alias) address when NAME is omitted. `pause`, `resume`,
+  `resize`, `describe`, and `delete` always require an explicit NAME.
 - **Resource prefix** — `resource_prefix` in the site descriptor
-  (default `chasm`): the prefix every Incus object this site owns is
-  named from — instance metadata keys (`user.<prefix>.*`), the shared and
-  workspace volumes, and the sealed template instances. Host-side names
+  (default `chasm`): the prefix for instance metadata keys
+  (`user.<prefix>.*`), the shared and workspace volumes, and the sealed
+  template instances. Sandbox instances always use the fixed `sandbox-`
+  prefix, and the bridge, storage pool, profile, and base-image alias have
+  their own site keys. Host-side names
   (units, paths, users, the nftables table) never derive from it. Leave it
   at the default unless you are adopting an existing installation's Incus
   objects (for example ones named `agent-sandbox-*`).

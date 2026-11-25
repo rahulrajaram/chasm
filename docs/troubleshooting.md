@@ -31,10 +31,14 @@ Reading its output:
   the persistent volumes are unaffected.
 - `/workspace` and `/shared` sit on the same storage pool, so their free
   space is one shared budget; the diagnostic itself reports no per-mount
-  figure — use `pool_free_bytes` for real headroom. (A hypothetical `df`
-  inside the guest on either mount would show that same shared pool, but
+  figure — `pool_free_bytes` is free space inside the mounted pool. For a
+  loop-backed pool, also check `host_free_bytes` (the filesystem holding
+  `/var/lib/incus`); `chasm show` warns when the loop file cannot grow to the
+  configured pool size. (A hypothetical `df` inside the guest on either mount
+  would show that same shared pool, but
   no such field is emitted by this tool.)
-- `workspace_du_bytes` is a `du` estimate, not allocation.
+- `workspace_du_bytes` is `du`'s estimate of disk space used by the workspace
+  directory tree; it is not an exact storage-pool allocation or a volume quota.
 
 **Supervisor fails to start: "could not be resolved through the system
 account lookup (NSS)"**
@@ -55,9 +59,12 @@ shipped modprobe drop-in and reload the module — exact commands in
 [install.md](install.md#disabling-nested-virtualization).
 
 **Provisioning refuses: "disk headroom ... is insufficient"**
-The filesystem carrying `/var/lib/incus` needs the pool size (64 GiB by
-default) plus a fixed 10 GiB margin free. Free space there or lower
-`pool_size_gib` in the descriptor before provisioning.
+The filesystem carrying `/var/lib/incus` needs free space for the configured
+pool size (64 GiB by default) plus a fixed 10 GiB margin when the pool does not
+exist yet or is not loop-backed. For an existing loop-backed pool it needs the
+10 GiB margin plus the space the loop file can still grow into. The refusal
+names the rule it applied. Free space there or lower `pool_size_gib` before
+provisioning.
 
 **`chasm start` refuses, naming a memory resource**
 Admission refused the start: the sum of running sandbox budgets plus
@@ -72,11 +79,12 @@ by the host CPU count. The refusal names the cap and its source; request
 a smaller budget or add host resources.
 
 **A sandbox's resources need to change after creation**
-Use `chasm resize NAME --memory SIZE --cpu N --root-disk SIZE` (at
-least one flag) on a **stopped** sandbox; it rewrites the recorded
-budget and the enforced Incus limit together and proves both by reading
-them back. The same command repairs drift — a sandbox whose recorded
-budget and enforced limit disagree (changed outside chasm) is brought
+Use `chasm resize NAME [--memory SIZE] [--cpu N] [--root-disk SIZE]` (at least
+one flag) on a **stopped** sandbox. `--memory` and `--cpu` rewrite the recorded
+budget and the enforced Incus limit together; `--root-disk` grows the enforced
+root-device size (there is no separate root-disk budget). Every change is
+proven by reading it back. The same command repairs drift — a sandbox whose
+recorded budget and enforced limit disagree (changed outside chasm) is brought
 back in line for the resource you resize. Never edit `user.*` metadata
 keys or run `incus config set` on a managed instance; that is exactly
 what creates drift.
@@ -117,9 +125,10 @@ that the backing filesystem cannot cover.
 A root disk can only grow: the refusal names the current size. A smaller
 size is refused; re-applying the current size is a proven no-op (nothing
 is written; the current value is proven by read-back). A new size above the storage pool's
-configured size is refused too — grow the pool first (edit
-`pool_size_gib` and rerun `install-chasm.sh --provision`; see
-[install.md](install.md)).
+configured size is refused too. For a chasm-managed loop-backed pool, raise
+`pool_size_gib` and rerun `install-chasm.sh --provision` (its backing-space
+check must pass; see [install.md](install.md#growing-the-storage-pool)). Chasm refuses to grow a pool
+that is not loop-backed; that needs separate administrator handling.
 
 **`chasm delete` refuses: the sandbox is running**
 Stop it first (`chasm stop NAME`). Passing a `sandbox-`-prefixed
@@ -142,10 +151,10 @@ instance and no guaranteed recovery recipe. The diagnostic never grows a pool, r
 VM, or takes a snapshot by itself.
 
 **`install-chasm.sh --verify` reports a stale sealed template**
-The tree changed since the template was sealed. Re-run `--provision`
+One of the template's identity inputs changed since it was sealed (see
+[upgrade-and-uninstall.md](upgrade-and-uninstall.md)). Re-run `--provision`
 and accept the template rebuild (it is admitted beside running
-sandboxes when host memory fits); see
-[upgrade-and-uninstall.md](upgrade-and-uninstall.md).
+sandboxes when host memory fits).
 
 **The template build refuses: "IPv4 address ... is already claimed by NAME"**
 The builder VM's address is fixed (the descriptor's `sandbox_ipv4_prefix`
@@ -176,8 +185,10 @@ build from scratch and verify the site.
 **A privileged step refuses: "site identity check failed"**
 The pinned identity marker at `/etc/chasm/site-host-id` does not
 match this machine (for example, the descriptor or marker was copied
-from another host). Privileged actions fail closed. Re-pin deliberately
-by re-running provisioning on the host you intend to keep.
+from another host). Privileged actions fail closed, and rerunning
+`install-chasm.sh --provision` refuses the mismatched marker. Re-pinning is a
+deliberate administrator action outside normal provisioning; first confirm
+this machine should own the site.
 
 **`chasm shell` reports the privileged shell entry was refused**
 The sudo hop requires the real operator: the entry helper only accepts
@@ -192,24 +203,11 @@ bridge. The helper needs `xclip` (X11) or `wl-copy` (Wayland) installed on
 the desktop and application OSC 52 support; an intervening tmux must
 forward it (`set -s set-clipboard on`). Details in [clipboard.md](clipboard.md).
 
-**SQLite fails on `/workspace` or `/shared` (WAL, mmap, `SQLITE_IOERR`)**
-`/workspace` and `/shared` are virtiofs mounts backed by the host storage
-pool, and they do not support the shared-memory mapping (`xShmMap`) that
-SQLite's WAL journal mode requires. Observed symptoms on these mounts:
-
-- Database initialization aborts with `Error code 5386: I/O error within
-  the xShmMap method (trying to map a shared-memory segment into process
-  address space)` and leaves a broken partial store behind.
-- Preallocated SQLite databases of roughly 344 KiB or more failed
-  `PRAGMA integrity_check` or already failed to open with `SQLITE_IOERR`.
-- Native SQLite runs that placed live scratch on the workspace virtiofs
-  mount failed before their assertions ran.
-
-The fix: keep SQLite databases on the guest's own disk (for example under
-`/home/agent` or `/var/tmp`) or open them with
-`PRAGMA journal_mode=DELETE`, which needs no shared-memory map. This
-applies to every tool that embeds SQLite (indexers, caches, agent state),
-not only to the `sqlite3` CLI.
+**SQLite fails on `/workspace` or `/shared` in WAL mode**
+`/workspace` and `/shared` are virtiofs mounts. WAL mode is known to fail on
+these mounts; keep databases on the guest root disk (for example under
+`/home/agent`) or use `journal_mode=DELETE`. This applies to tools that embed
+SQLite, including indexers, caches, and agent state.
 
 **Verify reports "socket is not active"**
 The socket-activated executor or supervisor socket is down. Check

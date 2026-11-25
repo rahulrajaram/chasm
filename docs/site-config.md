@@ -5,7 +5,7 @@ permalink: /site-config.html
 # Site configuration
 
 `/etc/chasm/site.conf` configures one Chasm installation. The installer
-copies [the example](../host-config/site.conf.example) on first provision
+copies [the example](https://github.com/rahulrajaram/chasm/blob/main/host-config/site.conf.example) on first provision
 and resolves the site name and operator. Later provisioning runs use the
 installed descriptor. Changes to the descriptor alone cannot migrate Incus
 objects or change already-rendered systemd and firewall configuration.
@@ -30,9 +30,9 @@ credentials outside this file.
 | `resource_prefix` | `chasm` | Ownership metadata keys, volume names and sealed template names. Omission and an empty value use the default. Changing it on a live site makes its existing objects appear foreign to Chasm. |
 | `operator_user` | Provisioning user | Required key. An empty value resolves to the invoking user. Use an existing unprivileged host account distinct from the supervisor. |
 | `guest_uid` | `1001` | UID and GID of the sandbox account. Valid range is 1 to 2147483647. Choose before building templates and creating data, since file ownership is numeric. |
-| `supervisor_user` | `chasm-supervisor` | Dedicated unprivileged service account and socket group. Choose before installing the control plane. |
+| `supervisor_user` | `chasm-supervisor` | Dedicated unprivileged service account. Its group owns the executor socket `/run/chasm-executor.sock`. The supervisor socket is owned by the group named by `operator_user`. Choose before installing the control plane. |
 | `host_reserve_mib` | `1024` | Host memory reserved by sandbox admission, from 0 to 1048576 MiB. It reduces the budget available to sandboxes. |
-| `default_sandbox` | Empty | Optional logical name for commands that accept an omitted sandbox argument. Supply the name without the `sandbox-` prefix. |
+| `default_sandbox` | Empty | Optional logical name used when `shell`, `start`, `stop`, `status`, or `show` without `--layout` omits `NAME`. Supply the name without the `sandbox-` prefix. `pause`, `resume`, `resize`, `describe` and `delete` always require an explicit name. |
 | `bootstrap_profile` | `minimal` | Bootstrap manifest used to build the sealed template. Omission and an empty value use the default. See [profiles](plugins.md). |
 
 All fields are required except `site_name`, `resource_prefix`,

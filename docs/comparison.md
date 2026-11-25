@@ -1,17 +1,23 @@
 ---
-title: "Chasm compared with Incus, Docker, Firecracker, Vagrant and gVisor"
+title: "Chasm compared with other sandboxing tools"
 permalink: /comparison.html
 ---
-# Chasm compared with Incus, Docker, Firecracker, Vagrant and gVisor
+# Chasm compared with other sandboxing tools
 
 Both Chasm and Docker can cap CPU and memory and discard a workspace. Choose Chasm when you want unfamiliar code to run behind a VM boundary: each sandbox boots its own Linux kernel. An ordinary Docker Engine container on Linux shares the kernel of its container host. Chasm uses Incus to provide the VM and adds a sealed starting image, memory admission checks and a private workspace with a defined cleanup policy.
+
+## How Chasm is built
+
+Chasm is not an alternative to KVM or QEMU; it runs on them. KVM is the hypervisor in the Linux kernel. QEMU is the virtual machine monitor that emulates each VM's hardware on top of KVM. Incus creates and manages those QEMU VMs, and uses LXC for its containers. Chasm sits on Incus and adds the sealed template, memory admission checks, the private workspace and its cleanup, and a constrained operator CLI. The useful comparison is with managing QEMU VMs yourself, for example through libvirt.
 
 ## Which isolation model fits the workload?
 
 | Tool | What runs the workload? | When to choose it | Security decision you still own |
 | --- | --- | --- | --- |
-| Chasm | A full Incus VM per sandbox, with a guest kernel and a private root disk and workspace. | Run unfamiliar code that needs a full Linux system, with a separate guest kernel for each workload. Chasm provisions the VM, checks available memory before start, and removes its private workspace on delete. | All guests can write to the site's shared volume and reach peers on the stock bridge. Use the site within one operator trust domain. [Architecture](architecture.md) |
+| Chasm | A full Incus VM per sandbox, with a guest kernel and a private root disk and workspace. | Run unfamiliar code that needs a full Linux system, with a separate guest kernel for each workload. Chasm provisions the VM, refuses a start when the memory budgets of running sandboxes plus the new one exceed host memory minus a reserve, and removes its private workspace on delete. | All guests can write to the site's shared volume and reach peers on the stock bridge. Use the site within one operator trust domain. [Architecture](architecture.md) |
 | Incus | System containers sharing the host kernel, or VMs with their own kernels. | Manage a mix of long-lived or disposable Linux systems and configure their profiles, networks and storage directly. | Select the instance type, device access, network and privileges for each workload. [Incus instance types](https://linuxcontainers.org/incus/docs/main/explanation/instances/) |
+| QEMU with libvirt | A full VM per guest on KVM, defined and managed with libvirt tools such as `virsh` or virt-manager. | Run any guest operating system or hardware configuration and manage each VM by hand. | Choose and maintain the guest images, networks, storage, shared folders and cleanup for every VM. [libvirt](https://libvirt.org/) · [QEMU](https://www.qemu.org/docs/master/) |
+| LXC | System containers that run a full Linux userspace but share the host kernel. Incus uses LXC for its containers. | Run long-lived Linux systems with less memory and faster startup than a VM, when sharing the host kernel is acceptable. | Choose unprivileged or privileged containers, ID mapping, nesting and device access. [LXC introduction](https://linuxcontainers.org/lxc/introduction/) |
 | Docker Engine on Linux | Ordinary Linux containers isolate processes with namespaces and account for resources with cgroups. They share the host kernel. | Package an application as an image and run it with the Docker toolchain. | Review daemon access, capabilities, privileged mode and host mounts. Access to the Docker daemon is a privileged boundary. [Docker Engine security](https://docs.docker.com/engine/security/) |
 | Firecracker | A KVM microVM with a guest kernel and a deliberately small virtual device model. | Build a service that launches large numbers of lightweight VMs and supplies its own orchestration. | The service operator supplies guest images, networking, storage and the host controls around the VMM. [Firecracker architecture](https://firecracker-microvm.github.io/) |
 | Vagrant | A provider creates the environment. A VM provider and the Docker provider use different isolation mechanisms. | Describe a reproducible development environment and choose a provider for each host. | Review the provider, synced folders, forwarded ports and provisioners in the project configuration. [Vagrant providers](https://developer.hashicorp.com/vagrant/docs/providers) |

@@ -32,8 +32,9 @@ together, and must match. chasm is the only writer: a sandbox changed
 with plain `incus config set` is in **drift**, and chasm says so instead
 of silently trusting either side.
 
-**Check:** admission, `chasm show`, and every lifecycle path read the
-enforced Incus value. When the record and the enforced value differ,
+**Check:** every path that uses a resource value (start and template-build
+admission, `chasm show`, and `chasm resize`) reads the enforced Incus value.
+When the record and the enforced value differ,
 admission counts the larger of the two.
 
 ## 2. Show the truth, and flag drift
@@ -68,8 +69,9 @@ Each supported change:
 - runs through the same admission as `create` and `start`;
 - refuses what it cannot do safely (shrinking a disk, resizing a
   running sandbox where Incus cannot apply it live);
-- writes the record and the enforced value together and proves both by
-  reading them back;
+- writes every value it changes (for memory and CPU, the budget key and the
+  Incus limit; for the root disk, the Incus device size) and proves each by
+  reading it back;
 - is appended to the executor's audit log like every privileged
   operation.
 

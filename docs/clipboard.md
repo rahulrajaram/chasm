@@ -40,10 +40,11 @@ This is text transfer through the interactive terminal, not a synchronized
 clipboard service inside the guest. Guest `xclip`, application-native
 clipboard-read shortcuts, image paste, and graphical drag-and-drop do not gain
 desktop access. Clipboard read queries are not serviced by the bridge. Copies
-whose OSC 52 sequence exceeds 1 MiB (about 768 KiB of decoded text), invalid
-UTF-8, unsupported selection targets, and failed desktop writes fall back to
-the terminal's own handling. A failed desktop write emits a warning once per
-session, without printing clipboard contents.
+whose OSC 52 sequence exceeds 1 MiB (about 768 KiB of decoded text), malformed
+base64, invalid UTF-8 or NUL-containing text, unsupported selection targets,
+and failed desktop writes fall back to the terminal's own handling. A failed
+desktop write emits a warning once per session, without printing clipboard
+contents.
 
 ## Remote sessions
 

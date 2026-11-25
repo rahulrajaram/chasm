@@ -67,12 +67,14 @@ flowchart TD
 Ordinary `chasm` commands and the supervisor run unprivileged. Lifecycle
 commands go through the supervisor to a small root executor. The executor
 and the privileged helper scripts it runs are the path to Incus for those
-commands, and the executor records every request it dispatches in an
-audit log. `chasm shell` is the one exception: it uses a single sudoers
-grant that names only the internal `chasm __shell` entry, which runs as
-root. That entry checks the sandbox name, the host identity, and the
-guest user, then opens a shell in the VM. chasm never grants general Incus
-or root access. See [docs/architecture.md](docs/architecture.md).
+commands. After each request it dispatches, the executor appends an audit
+record; if that write fails, it reports the request as failed, although the
+operation may already have run. `chasm shell` is the one exception: it uses a
+single sudoers grant that names only the internal `chasm __shell` entry, which runs as
+root. That entry checks the invoking operator, the sandbox name, and the host
+identity, then opens a login shell in the VM as the site's guest UID and GID.
+chasm never grants general Incus or root access. See
+[docs/architecture.md](docs/architecture.md).
 
 ## Requirements
 

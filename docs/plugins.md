@@ -6,19 +6,18 @@ permalink: /plugins.html
 
 Chasm core is self-contained. It builds, installs, verifies, and templates a
 site with the entire `plugins/` directory absent. Everything under
-`plugins/` is optional, explicitly vended source — core never discovers,
-registers, probes, or auto-loads any of it.
+`plugins/` is optional, explicitly vended source — core has no plugin
+discovery, registry, or automatic application mechanism.
 
 ## What core owns
 
 Core owns the control plane (supervisor, executor, CLI), resource admission,
 guest identity and the guest account, networking and isolation, the zsh shell
-contract, timesync recovery, credential scrubbing and sealing, and template
-identity. Core's supported platform is unchanged: Debian 12/13 amd64 hosts
-with systemd, nftables, KVM (nested virtualization disabled), and Incus.
-Incus is a core prerequisite — the plugin described below only helps acquire
-it on Debian; nothing in the plugin contract widens the supported platform
-list, and no unaudited architecture or provider is claimed as supported.
+contract, timesync recovery, credential checks and sealing, and template
+identity. Core's stated support targets are Debian 12/13 amd64 hosts with
+systemd, nftables, KVM (nested virtualization disabled), and Incus. Core
+preflight accepts any Debian-family host (`ID` or `ID_LIKE`); the bundled
+`--install-incus` add-on is Debian-only. Incus is a core prerequisite.
 
 ## What a plugin is
 
@@ -42,7 +41,7 @@ Plugins come in exactly three shapes:
    installs explicitly.
 3. **Standalone host provisioning scripts** — opt-in, explicit-invocation
    scripts with their own typed confirmations, trust checks, and rollback;
-   never run implicitly by the installer.
+   never applied implicitly by the installer.
 
 ## Profile roots and upgrades
 
@@ -105,5 +104,9 @@ the per-plugin READMEs for specifics.
 When a plugin-backed flag (`--harden-ssh`, `--install-incus`) is requested
 but the plugin directory is absent from the source tree (or its installed
 copy is absent from the provision root), the installer fails with a clear
-message naming the missing plugin. With no flag, no plugin is consulted and
-core produces no distro package-install, sshd, or clipboard side effect.
+message naming the missing plugin. With no flag, no plugin changes the host.
+If the ssh-hardening add-on is present, `--provision` and `--verify` source it
+to report on, and `sshd -t`-validate, hardening drop-ins that are already
+installed; core produces no host package-install or clipboard side effect.
+Template construction still installs the mandatory and selected profile
+packages inside the builder guest.
