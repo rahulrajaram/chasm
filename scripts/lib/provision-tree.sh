@@ -80,6 +80,7 @@ PROVISION_TREE_EXECUTABLES="host-control/chasm-firewall \
 scripts/audit-workspace-symlinks.sh \
 scripts/build-sandbox-template.sh \
 scripts/check-ci-coverage.sh \
+scripts/check-commit-identity.sh \
 scripts/check-core-only.sh \
 scripts/check-descriptor-parity.sh \
 scripts/check-portability.sh \
