@@ -1,3 +1,7 @@
+---
+title: "Drive a sandbox from an agent"
+permalink: /agent-workflow.html
+---
 # Drive a sandbox from an agent
 
 Run these commands as the configured Chasm operator on a provisioned

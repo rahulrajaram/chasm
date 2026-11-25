@@ -1,0 +1,24 @@
+---
+layout: null
+permalink: /llms.txt
+---
+# Chasm
+
+> Chasm gives each coding agent its own persistent Linux VM on hardware you control. Each sandbox is a full Incus/QEMU VM on KVM with its own guest kernel, private root disk and /workspace volume, plus a /shared volume mounted in every sandbox. Sandboxes keep their state across stop and start and are meant to run for weeks. Chasm runs on one Linux x86_64 host and needs no cloud service.
+
+Key facts:
+- Commands: `chasm create NAME`, `chasm start NAME`, `chasm shell NAME`, `chasm exec NAME -- CMD` (exit status preserved, separate stdout/stderr), `chasm stop`, `chasm pause`/`resume`, `chasm delete`, `chasm doctor --json`.
+- Tested hosts: Debian 13, Ubuntu 26.04 and 24.04, Fedora 45 (SELinux enforcing), Arch Linux; x86_64 with KVM. Hosts outside the Debian family need `--allow-untested-host`.
+- Isolation: VM boundary per sandbox; an nftables policy blocks private and reserved IPv4 and routed IPv6 from guests; public IPv4 egress is not filtered.
+- Not a hosted platform: no multi-host scheduling, public URLs, idle sleep with wake-on-request, or checkpoints today. It does not aim to replace Fly.io.
+- License: MIT.
+
+## Docs
+
+- [Install]({{ '/install.html' | absolute_url }}): requirements, compact install, what the installer changes
+- [Your first sandbox]({{ '/first-sandbox.html' | absolute_url }}): create, start, shell, exec, stop, delete
+- [Drive a sandbox from an agent]({{ '/agent-workflow.html' | absolute_url }}): `chasm exec` and `--status-fd`
+- [CLI reference]({{ '/cli.html' | absolute_url }})
+- [Architecture and trust boundaries]({{ '/architecture.html' | absolute_url }})
+- [Comparison with Incus, QEMU/libvirt, LXC, Docker, Firecracker, gVisor, Vagrant and Fly.io]({{ '/comparison.html' | absolute_url }})
+- [Troubleshooting]({{ '/troubleshooting.html' | absolute_url }})

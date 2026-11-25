@@ -13,6 +13,8 @@ guides:
         url: /install.html
       - title: "Your first sandbox"
         url: /first-sandbox.html
+      - title: "Drive a sandbox from an agent"
+        url: /agent-workflow.html
       - title: "Chasm compared with other sandboxing tools"
         url: /comparison.html
   - section: Operating a site

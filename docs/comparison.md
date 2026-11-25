@@ -4,6 +4,8 @@ permalink: /comparison.html
 ---
 # Chasm compared with other sandboxing tools
 
+**In short:** Chasm gives each agent a persistent, full Linux VM with its own kernel on one host you control. Containers (Docker, LXC, Incus containers) start faster and use less memory but share the host kernel. gVisor narrows the host kernel interface a container sees. Firecracker, QEMU with libvirt and Incus are the building blocks you would assemble yourself; Chasm is built on Incus, QEMU and KVM. Fly.io Sprites and Fly Machines run hosted VMs with fast starts, public URLs and idle sleep that Chasm does not have.
+
 Both Chasm and Docker can cap CPU and memory and discard a workspace. Choose Chasm when you want unfamiliar code to run behind a VM boundary: each sandbox boots its own Linux kernel. An ordinary Docker Engine container on Linux shares the kernel of its container host. Chasm uses Incus to provide the VM and adds a sealed starting image, memory admission checks and a private workspace with a defined cleanup policy.
 
 ## How Chasm is built

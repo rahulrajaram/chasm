@@ -1,0 +1,18 @@
+{%- if page.url == "/" or page.url == "/index.html" -%}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Chasm",
+  "description": "Chasm gives each coding agent its own persistent Linux VM on your own hardware. Each sandbox is a full Incus VM with its own guest kernel, root disk and /workspace volume, plus a /shared volume across sandboxes. Sandboxes keep their state across stop and start and can run for weeks.",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "Linux (x86_64 with KVM); tested on Debian 13, Ubuntu 26.04 and 24.04, Fedora 45 and Arch Linux",
+  "softwareRequirements": "KVM, Incus with incus-agent, virtiofsd, systemd, nftables, Go 1.23 or newer",
+  "license": "https://opensource.org/licenses/MIT",
+  "codeRepository": "{{ site.github_url }}",
+  "url": "{{ '/' | absolute_url }}",
+  "isAccessibleForFree": true,
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+}
+</script>
+{%- endif -%}
