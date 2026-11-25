@@ -104,12 +104,19 @@ func runExec(arguments []string, getenv func(string) string, stdin, stdout, stde
 		}
 	}
 	if result.Code != "" && result.Code != "client_disconnected" {
-		_ = writeExecOutput(stderr, []byte(fmt.Sprintf("chasm: exec %s\n", execErrorMessage(result.Code))))
+		_ = writeExecOutput(stderr, []byte(fmt.Sprintf("chasm: exec %s\n", execResultMessage(result.Code, request.Name))))
 	}
 	if result.OutputCode != "" {
 		_ = writeExecOutput(stderr, []byte("chasm: exec output delivery was incomplete\n"))
 	}
 	return result.ExitCode()
+}
+
+func execResultMessage(code, name string) string {
+	if code == "target_initializing" {
+		return fmt.Sprintf("sandbox %s is still initializing; wait for `chasm start` to finish and retry", name)
+	}
+	return execErrorMessage(code)
 }
 
 func execErrorMessage(code string) string {
@@ -480,7 +487,15 @@ func dispatchExec(ctx context.Context, instance string, request guestexec.Reques
 	if err != nil {
 		return guestexec.Rejected("incus_unavailable")
 	}
-	client := guestexec.NewClient(endpoint)
+	return dispatchResolvedExec(ctx, guestexec.NewClient(endpoint), instance, request, guest, input, writer, setupStarted)
+}
+
+type foregroundClient interface {
+	Instance(context.Context, string) (map[string]any, error)
+	Execute(context.Context, string, guestexec.Request, int, <-chan []byte, guestexec.Output) guestexec.Result
+}
+
+func dispatchResolvedExec(ctx context.Context, client foregroundClient, instance string, request guestexec.Request, guest int, input <-chan []byte, writer *guestexec.FrameWriter, setupStarted time.Time) guestexec.Result {
 	metadata, err := client.Instance(ctx, instance)
 	if code := execTargetError(instance, metadata, err); code != "" {
 		if ctx.Err() != nil {
@@ -512,6 +527,10 @@ func execTargetError(instance string, metadata map[string]any, err error) string
 	}
 	if metadata["status"] != "Running" && metadata["status"] != "Ready" {
 		return "target_not_running"
+	}
+	config, _ := metadata["config"].(map[string]any)
+	if config[siteconfig.Active().MetadataKey("initialized")] != "true" {
+		return "target_initializing"
 	}
 	return ""
 }
@@ -562,4 +581,10 @@ func watchExecPeer(ctx context.Context, fd uintptr, cancel context.CancelFunc) {
 			return
 		}
 	}
+}
+
+// Kept as a seam so helper tests can prove rejection precedes syscall.Exec.
+var shellTargetError = func(socket, instance string) string {
+	metadata, err := guestexec.NewClient(socket).Instance(context.Background(), instance)
+	return execTargetError(instance, metadata, err)
 }

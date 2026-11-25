@@ -3,6 +3,8 @@ package guestexec
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -211,6 +213,12 @@ func (client *Client) Execute(ctx context.Context, name string, request Request,
 	started := time.Now()
 	setupCtx, stopSetup := context.WithTimeout(ctx, operationTimeout)
 	defer stopSetup()
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return Rejected("setup_failed")
+	}
+	token := hex.EncodeToString(nonce[:])
+	request.Argv = client.wrappedArgv(token, request.Argv)
 	op, err := client.start(setupCtx, name, request, uid)
 	if err != nil {
 		var rejected daemonError
@@ -235,7 +243,15 @@ func (client *Client) Execute(ctx context.Context, name string, request Request,
 	}
 	ready := time.Now()
 	stopSetup()
-	return client.stream(ctx, op.ID, sockets, input, output, started, ready)
+	result := client.stream(ctx, op.ID, sockets, input, output, started, ready)
+	if result.Code == "ambiguous_incus_return" && client.confirmMarker(name, token, uid) {
+		status := 129
+		result.GuestStatus = &status
+		result.Disposition = "completed"
+		result.Code = ""
+		result.Confirmation = "status_marker"
+	}
+	return result
 }
 
 func (client *Client) stream(ctx context.Context, id string, sockets []*websocket, input <-chan []byte, output Output, started, ready time.Time) Result {
@@ -343,7 +359,7 @@ func (client *Client) stream(ctx context.Context, id string, sockets []*websocke
 		}
 		cancelReason, cancelAt = reason, time.Now()
 		sendSignal(int(syscall.SIGTERM))
-		timer = time.NewTimer(client.grace)
+		timer = time.NewTimer(client.grace + 250*time.Millisecond)
 		timerChannel = timer.C
 	}
 	clientDone := ctx.Done()

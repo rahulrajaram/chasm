@@ -24,6 +24,7 @@ func TestResultExitCodes(t *testing.T) {
 		{"complete zero", Result{GuestStatus: value(0)}, 0},
 		{"zero incomplete", Result{GuestStatus: value(0), OutputCode: "output_incomplete"}, 125},
 		{"nonzero incomplete", Result{GuestStatus: value(7), OutputCode: "output_incomplete"}, 7},
+		{"confirmed 129", Result{Disposition: "completed", GuestStatus: value(129), Confirmation: "status_marker"}, 129},
 		{"Incus 129", Result{Disposition: "outcome_unknown", IncusReturn: value(129)}, 124},
 		{"setup", Rejected("setup_failed"), 126},
 		{"rejected", Rejected("target_missing"), 125},

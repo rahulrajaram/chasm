@@ -19,6 +19,8 @@ import (
 	"time"
 )
 
+const markerOperationID = "62458fac-20f3-408d-a3ca-55fc8ca29d1a"
+
 const testOperationID = "52458fac-20f3-408d-a3ca-55fc8ca29d1a"
 
 type fakeIncus struct {
@@ -30,6 +32,9 @@ type fakeIncus struct {
 	dropRelease      chan struct{}
 	signals          chan int
 	finish           chan struct{}
+	marker           bool
+	readbackError    bool
+	readbacks        chan execPost
 	exit             int
 	operationFailure string
 	dropOutput       bool
@@ -39,7 +44,7 @@ type fakeIncus struct {
 
 func newFakeIncus(t *testing.T) *fakeIncus {
 	return &fakeIncus{
-		t: t, command: make(chan execPost, 1), stdin: make(chan []byte, 1), opened: make(chan byte, 4),
+		t: t, readbacks: make(chan execPost, 2), command: make(chan execPost, 1), stdin: make(chan []byte, 1), opened: make(chan byte, 4),
 		handshakes: make(chan struct{}, 4), dropRelease: make(chan struct{}),
 		signals: make(chan int, 3), finish: make(chan struct{}),
 	}
@@ -89,6 +94,15 @@ func (fake *fakeIncus) serve(conn net.Conn) {
 			fake.t.Error(err)
 			return
 		}
+		if !post.WaitForWS {
+			fake.readbacks <- post
+			if fake.readbackError {
+				writeTestJSON(conn, "500 Internal Server Error", nil)
+				return
+			}
+			writeTestJSON(conn, "202 Accepted", map[string]any{"type": "async", "status_code": 100, "operation": "/1.0/operations/" + markerOperationID, "metadata": map[string]any{"id": markerOperationID}})
+			return
+		}
 		fake.command <- post
 		fds := map[string]string{}
 		for key, char := range map[string]string{"control": "a", "0": "b", "1": "c", "2": "d"} {
@@ -98,6 +112,12 @@ func (fake *fakeIncus) serve(conn net.Conn) {
 			"type": "async", "status_code": 100, "operation": "/1.0/operations/" + testOperationID,
 			"metadata": map[string]any{"id": testOperationID, "metadata": map[string]any{"fds": fds}},
 		})
+	case "/1.0/operations/" + markerOperationID + "/wait":
+		status := 1
+		if fake.marker {
+			status = 0
+		}
+		writeTestJSON(conn, "200 OK", map[string]any{"type": "sync", "status_code": 200, "metadata": map[string]any{"id": markerOperationID, "status_code": 200, "metadata": map[string]any{"return": status}}})
 	case "/1.0/operations/" + testOperationID + "/wait":
 		<-fake.finish
 		status := 200
@@ -260,7 +280,7 @@ func TestNativeExecSeparatesStreamsAndPreservesGuestStatus(t *testing.T) {
 			}
 			post := <-fake.command
 			if post.User != 3456 || post.Group != 3456 || post.Interactive || !post.WaitForWS || post.Cwd != "/workspace" ||
-				len(post.Command) != 3 || post.Command[1] != "" || post.Command[2] != "x; y" || post.Environment["KEY"] != "guest=value" ||
+				len(post.Command) != 12 || post.Command[10] != "" || post.Command[11] != "x; y" || post.Environment["KEY"] != "guest=value" ||
 				post.Environment["HOME"] != "/home/agent" {
 				t.Fatalf("unexpected Incus request %+v", post)
 			}
@@ -348,5 +368,52 @@ func TestNativeExecBoundsOutputDrainAfterOperationCompletes(t *testing.T) {
 	result := client.Execute(context.Background(), "sandbox-test", Request{Argv: []string{"app"}, Cwd: "/"}, 3456, input, func(byte, []byte) error { return nil })
 	if result.GuestStatus == nil || *result.GuestStatus != 7 || result.OutputCode != "output_incomplete" {
 		t.Fatalf("did not report incomplete stream delivery: %+v", result)
+	}
+}
+
+func TestStatusMarkerConfirmation(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		exit            int
+		marker, failure bool
+		want            int
+	}{
+		{"present", 129, true, false, 129}, {"absent", 129, false, false, 124},
+		{"readback error", 129, true, true, 124}, {"ordinary", 7, true, false, 7},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newFakeIncus(t)
+			fake.exit = tc.exit
+			fake.marker = tc.marker
+			fake.readbackError = tc.failure
+			fake.terminate()
+			input := make(chan []byte)
+			close(input)
+			result := newClient(fake.dial).Execute(context.Background(), "sandbox-test", Request{Argv: []string{"app"}, Cwd: "/"}, 3456, input, func(byte, []byte) error { return nil })
+			if result.ExitCode() != tc.want {
+				t.Fatalf("%+v", result)
+			}
+			if tc.want == 129 && (result.Disposition != "completed" || result.Confirmation != "status_marker") {
+				t.Fatalf("%+v", result)
+			}
+			if tc.want == 124 && (result.Code != "ambiguous_incus_return" || result.IncusReturn == nil || *result.IncusReturn != 129) {
+				t.Fatalf("%+v", result)
+			}
+			post := <-fake.command
+			select {
+			case readback := <-fake.readbacks:
+				if tc.exit != 129 {
+					t.Fatal("unnecessary readback")
+				}
+				if readback.User != post.User || readback.Group != post.Group || readback.Cwd != "/" || readback.WaitForWS ||
+					len(readback.Command) != 8 || readback.Command[5] != markerReadback || readback.Command[7] != post.Command[7] {
+					t.Fatalf("unsafe readback: %+v", readback)
+				}
+			default:
+				if tc.exit == 129 {
+					t.Fatal("missing readback")
+				}
+			}
+		})
 	}
 }

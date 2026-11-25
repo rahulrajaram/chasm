@@ -72,15 +72,16 @@ func (request Request) Validate() error {
 }
 
 type Result struct {
-	Version     int              `json:"version"`
-	RequestID   string           `json:"request_id,omitempty"`
-	Disposition string           `json:"disposition"`
-	Code        string           `json:"code,omitempty"`
-	OutputCode  string           `json:"output_code,omitempty"`
-	GuestStatus *int             `json:"guest_status,omitempty"`
-	IncusReturn *int             `json:"incus_return,omitempty"`
-	SignalSent  int              `json:"signal_sent,omitempty"`
-	Timings     map[string]int64 `json:"timings_ms,omitempty"`
+	Version      int              `json:"version"`
+	RequestID    string           `json:"request_id,omitempty"`
+	Disposition  string           `json:"disposition"`
+	Code         string           `json:"code,omitempty"`
+	OutputCode   string           `json:"output_code,omitempty"`
+	GuestStatus  *int             `json:"guest_status,omitempty"`
+	Confirmation string           `json:"confirmation,omitempty"`
+	IncusReturn  *int             `json:"incus_return,omitempty"`
+	SignalSent   int              `json:"signal_sent,omitempty"`
+	Timings      map[string]int64 `json:"timings_ms,omitempty"`
 }
 
 func Rejected(code string) Result {

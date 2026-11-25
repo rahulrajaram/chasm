@@ -447,6 +447,19 @@ func TestPrivilegedExecSlotRefusalPrecedesAcceptedAudit(t *testing.T) {
 	}
 }
 
+type refusedExecClient struct {
+	metadata map[string]any
+	t        *testing.T
+}
+
+func (c refusedExecClient) Instance(context.Context, string) (map[string]any, error) {
+	return c.metadata, nil
+}
+func (c refusedExecClient) Execute(context.Context, string, guestexec.Request, int, <-chan []byte, guestexec.Output) guestexec.Result {
+	c.t.Fatal("guest command dispatched before initialization")
+	return guestexec.Result{}
+}
+
 func TestExecTargetChecks(t *testing.T) {
 	site := siteconfig.Active()
 	instance := managedInstanceName("demo")
@@ -454,7 +467,7 @@ func TestExecTargetChecks(t *testing.T) {
 	metadata := map[string]any{
 		"name": instance, "type": "virtual-machine", "status": "Running",
 		"config": map[string]any{
-			site.MetadataKey("managed"): "true", site.MetadataKey("logical-name"): "demo",
+			site.MetadataKey("managed"): "true", site.MetadataKey("logical-name"): "demo", site.MetadataKey("initialized"): "true",
 			site.MetadataKey("workspace-volume"): volume, site.MetadataKey("shared-volume"): site.SharedVolumeName(),
 		},
 		"devices": map[string]any{
@@ -473,11 +486,33 @@ func TestExecTargetChecks(t *testing.T) {
 		{"unmanaged", map[string]any{"name": instance, "type": "virtual-machine", "status": "Running"}, nil, "target_unmanaged"},
 		{"not running", func() map[string]any { clone := maps.Clone(metadata); clone["status"] = "Stopped"; return clone }(), nil, "target_not_running"},
 		{"running", metadata, nil, ""},
+		{"initializing", func() map[string]any {
+			clone := maps.Clone(metadata)
+			config := maps.Clone(metadata["config"].(map[string]any))
+			delete(config, site.MetadataKey("initialized"))
+			clone["config"] = config
+			return clone
+		}(), nil, "target_initializing"},
+		{"ready initializing", func() map[string]any {
+			clone := maps.Clone(metadata)
+			clone["status"] = "Ready"
+			config := maps.Clone(metadata["config"].(map[string]any))
+			config[site.MetadataKey("initialized")] = "false"
+			clone["config"] = config
+			return clone
+		}(), nil, "target_initializing"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if got := execTargetError(instance, test.meta, test.err); got != test.want {
 				t.Fatalf("target code = %q, want %q", got, test.want)
 			}
+			if test.want == "target_initializing" {
+				result := dispatchResolvedExec(context.Background(), refusedExecClient{test.meta, t}, instance, guestexec.Request{Name: "demo"}, 1001, nil, nil, time.Now())
+				if result.Disposition != "rejected" || result.Code != "target_initializing" || result.ExitCode() != 125 {
+					t.Fatalf("unexpected refusal: %+v", result)
+				}
+			}
+
 		})
 	}
 }

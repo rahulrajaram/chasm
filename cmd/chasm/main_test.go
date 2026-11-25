@@ -571,6 +571,9 @@ func TestMissingDefaultSandboxFailsClosedNamingTheKey(t *testing.T) {
 }
 
 func TestPrivilegedShellIsIdentityAndManagedNameBoundAndNeverEntersGuestRoot(t *testing.T) {
+	previousTarget := shellTargetError
+	shellTargetError = func(string, string) string { return "" }
+	t.Cleanup(func() { shellTargetError = previousTarget })
 	previousResolver := resolvePrivilegedIncusSocket
 	resolvePrivilegedIncusSocket = func() (string, error) { return "/run/incus/unix.socket", nil }
 	t.Cleanup(func() { resolvePrivilegedIncusSocket = previousResolver })
@@ -811,5 +814,27 @@ func TestUnsafeTerminalValueFallsBackInsideGuest(t *testing.T) {
 	joined := strings.Join(shellArguments("sandbox-research", safeTerm("xterm;id"), 1001), " ")
 	if !strings.Contains(joined, "TERM=xterm-256color") || strings.Contains(joined, ";id") {
 		t.Fatalf("unsafe terminal reached invocation: %s", joined)
+	}
+}
+
+func TestPrivilegedShellRefusesInitializingBeforeDispatch(t *testing.T) {
+	previousResolver, previousTarget := resolvePrivilegedIncusSocket, shellTargetError
+	t.Cleanup(func() { resolvePrivilegedIncusSocket = previousResolver; shellTargetError = previousTarget })
+	resolvePrivilegedIncusSocket = func() (string, error) { return "/run/incus/unix.socket", nil }
+	shellTargetError = func(socket, instance string) string {
+		if socket != "/run/incus/unix.socket" || instance != managedInstanceName("research") {
+			t.Fatal("wrong target")
+		}
+		return "target_initializing"
+	}
+	stderr, err := os.CreateTemp(t.TempDir(), "stderr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stderr.Close()
+	code := runPrivilegedShell([]string{"__shell", "research"}, 0, testEnvironment(map[string]string{"SUDO_USER": siteconfig.Active().OperatorUser}), func() error { return nil }, func(string, []string, []string) error { t.Fatal("guest dispatched"); return nil }, stderr)
+	data, err := os.ReadFile(stderr.Name())
+	if err != nil || code != 125 || !strings.Contains(string(data), "sandbox research is still initializing; wait for `chasm start` to finish and retry") {
+		t.Fatalf("code=%d stderr=%q err=%v", code, data, err)
 	}
 }

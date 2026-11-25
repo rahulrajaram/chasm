@@ -417,8 +417,12 @@ Individual values are limited to 16 KiB. Eight execs may run per site.
 Confirmed guest exits are returned as process exit statuses. Chasm uses
 124 when completion is unknown, 125 for a rejected request, and 126 for
 local setup failure. Use --status-fd to distinguish these from equal guest
-codes. Incus can report 129 after a VM disconnect, so an Incus return of
-129 has unknown completion. Ctrl-C requests TERM, followed by KILL if needed.
+codes. A guest status marker confirms exit 129 even if Incus disconnects after
+the command exits. Without that marker, or if its readback fails, Incus return
+129 remains unknown (CLI 124). Ctrl-C requests TERM, followed by KILL if needed.
+Commands and shells are refused until sandbox initialization finishes.
+Missing or non-executable commands retain exits 127/126; Bash supplies their
+stderr diagnostics.
 `
 
 func isHelpFlag(argument string) bool {

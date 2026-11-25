@@ -547,6 +547,10 @@ func runPrivilegedShell(arguments []string, effectiveUID int, getenv func(string
 		fmt.Fprintf(stderr, "chasm: local Incus socket unavailable: %v\n", err)
 		return 1
 	}
+	if code := shellTargetError(socketPath, managedInstanceName(name)); code != "" {
+		fmt.Fprintf(stderr, "chasm: %s\n", execResultMessage(code, name))
+		return 125
+	}
 	environment := append(baseEnvironment(getenv), "INCUS_SOCKET="+socketPath)
 	return executeOrReport(execute, incusPath, shellArguments(managedInstanceName(name), safeTerm(getenv("TERM")), siteconfig.Active().GuestUID), environment, stderr)
 }
