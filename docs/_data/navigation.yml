@@ -35,6 +35,8 @@ guides:
     items:
       - title: "Plugins: the optional-component contract"
         url: /plugins.html
+      - title: "Nesting: Chasm in a VM, Docker in Chasm"
+        url: /nesting.html
       - title: "Terminal clipboard"
         url: /clipboard.html
       - title: "Audit a disposable Chasm guest with Lynis"

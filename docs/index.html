@@ -10,12 +10,11 @@ description: Fully sandboxed VMs, shared disk pools. Truly long-horizon agentic 
 <section class="section" id="use-cases">
   <h2>What you can do with it</h2>
   <ul>
-    <li>Give a coding agent a machine it keeps for weeks: packages, caches and checkouts are still there next session.</li>
-    <li>Run code an agent wrote or downloaded behind its own guest kernel, not yours.</li>
-    <li>Run several agents side by side, each in its own VM, handing files to each other through <code>/shared</code>.</li>
-    <li>Drive a sandbox from scripts or another agent with <code>chasm exec</code>, with real exit codes and separate stdout and stderr.</li>
-    <li>Pause a session with <code>chasm pause</code> and resume it exactly where it was.</li>
-    <li>Keep code, data and credentials on hardware you control, with no cloud account.</li>
+    <li><strong>Run</strong> coding agents <strong>for weeks</strong></li>
+    <li><strong>Isolate</strong> agent execution <strong>within VM sandboxes</strong></li>
+    <li><strong>Orchestrate agent swarms</strong></li>
+    <li>Control the sandbox <strong>lifecycle</strong></li>
+    <li><strong>Run Docker</strong> inside a sandbox, or <strong>run Chasm inside a VM</strong> (<a href="nesting.html">how</a>)</li>
   </ul>
 </section>
 <section class="section" id="install">

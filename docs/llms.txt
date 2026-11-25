@@ -18,6 +18,7 @@ Key facts:
 - [Install]({{ '/install.html' | absolute_url }}): requirements, compact install, what the installer changes
 - [Your first sandbox]({{ '/first-sandbox.html' | absolute_url }}): create, start, shell, exec, stop, delete
 - [Drive a sandbox from an agent]({{ '/agent-workflow.html' | absolute_url }}): `chasm exec` and `--status-fd`
+- [Nesting]({{ '/nesting.html' | absolute_url }}): Chasm inside a QEMU/KVM VM (tested), not inside Firecracker; Docker inside a sandbox (tested)
 - [CLI reference]({{ '/cli.html' | absolute_url }})
 - [Architecture and trust boundaries]({{ '/architecture.html' | absolute_url }})
 - [Comparison with Incus, QEMU/libvirt, LXC, Docker, Firecracker, gVisor, Vagrant and Fly.io]({{ '/comparison.html' | absolute_url }})
