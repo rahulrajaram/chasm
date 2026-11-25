@@ -7,8 +7,8 @@ permalink: /first-sandbox.html
 This walkthrough assumes a provisioned site (see
 [install.md](install.md)) and runs entirely as the operator user — no
 root, no direct Incus access. `chasm` refuses to run as root: run it as
-the operator account, without `sudo`; only `chasm shell` crosses a sudo
-grant, and it does so internally.
+the operator account without `sudo`. The `shell` and `exec` commands
+invoke their dedicated grants internally.
 
 <figure>
   <a href="assets/diagrams/sandbox-lifecycle.svg"><img src="assets/diagrams/sandbox-lifecycle.svg" width="760" height="620" alt="A new sandbox starts stopped. start runs it, pause and resume freeze and unfreeze it, stop returns it to stopped, and delete works only on a stopped sandbox."></a>
@@ -62,6 +62,14 @@ This opens an interactive login shell as the unprivileged `agent` user
 (the site's guest uid/gid) in `/home/agent`. The command uses a narrow
 sudo grant to a root-owned entry helper; chasm never grants general
 Incus or root access.
+
+For a one-off command, use foreground exec from the host instead of
+opening a terminal session. This command lists the sandbox's `/workspace`
+and writes the structured result to a separate file.
+
+```sh
+chasm exec research --cwd /workspace --status-fd 3 -- /usr/bin/ls -a 3>exec-status.json
+```
 
 Inside the sandbox:
 

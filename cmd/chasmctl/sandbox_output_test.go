@@ -279,3 +279,27 @@ func TestHumanSandboxDetailRendersUnavailableResources(t *testing.T) {
 		t.Fatalf("a failed collector must still print the section with its reason:\n%s", text)
 	}
 }
+
+func TestHumanSandboxDetailRendersObservedLifecyclePhases(t *testing.T) {
+	result := map[string]interface{}{
+		"logical_name": "research", "instance_status": "Stopped", "instance_pid": float64(0),
+		"workspace": "/workspace", "shared": "/shared",
+		"lifecycle_observations": []interface{}{map[string]interface{}{
+			"operation": "create", "ok": true,
+			"phase_timings_ms": map[string]interface{}{"total": json.Number("1500"), "clone": json.Number("300")},
+		}},
+	}
+	var output bytes.Buffer
+	handled, err := renderHumanResult("inspect-sandbox", result, &output, humanOutputStyle{Width: 100})
+	if err != nil || !handled {
+		t.Fatalf("handled=%v err=%v", handled, err)
+	}
+	for _, text := range []string{"Lifecycle timings", "create (ok)", "total 1500 ms", "clone 300 ms"} {
+		if !strings.Contains(output.String(), text) {
+			t.Fatalf("missing %q from output %q", text, output.String())
+		}
+	}
+	if strings.Contains(output.String(), "boot ") {
+		t.Fatalf("unobserved boot duration in output %q", output.String())
+	}
+}

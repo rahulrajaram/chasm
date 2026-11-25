@@ -435,7 +435,7 @@ func TestCreateSandboxRefusesCPUAboveTheInjectedHostCount(t *testing.T) {
 	original := hostCpuCount
 	t.Cleanup(func() { hostCpuCount = original })
 	hostCpuCount = func() int64 { return 16 }
-	_, err := createSandbox("sandbox-research", 0, 64)
+	_, err := createSandbox("sandbox-research", 0, 64, nil)
 	var protocolErr *ProtocolError
 	if !errors.As(err, &protocolErr) || protocolErr.Code != "resource_exhausted" || !strings.Contains(protocolErr.Message, "host CPU count") {
 		t.Fatalf("create must refuse a CPU budget above the host count naming its source: %v", err)
@@ -488,7 +488,7 @@ func TestCreateSandboxAdoptPathRecordsTheEnforcedTruth(t *testing.T) {
 		return 0, nil
 	}
 
-	result, err := createSandbox("sandbox-research", 0, 0)
+	result, err := createSandbox("sandbox-research", 0, 0, nil)
 	if err != nil {
 		t.Fatalf("the adopt path must record the enforced truth: %v", err)
 	}

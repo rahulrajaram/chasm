@@ -81,6 +81,17 @@ die() {
     exit 1
 }
 
+# Re-provisioning must render the same executable paths as a fresh install.
+grep -qx 'ExecStart=/usr/local/sbin/chasm-executor-server' \
+    "$ROOT/host-control/chasm-executor.service.template" || die "executor service path changed"
+grep -q '^ExecStart=/usr/local/sbin/chasm-supervisor-server ' \
+    "$ROOT/host-control/chasm-supervisor.service.template" || die "supervisor service path changed"
+grep -qx '@OPERATOR_USER@ ALL=(root) NOPASSWD: NOSETENV: /usr/local/bin/chasm __exec' \
+    "$ROOT/host-config/sudoers.d/chasm.template" || die "sudo exec path or tags changed"
+if grep -Eq 'NOLOG_INPUT|NOLOG_OUTPUT' "$ROOT/host-config/sudoers.d/chasm.template"; then
+    die "sudo-rs incompatible sudoers tags"
+fi
+
 # shellcheck source=scripts/lib/host-resources.sh
 . "$LIB"
 
@@ -986,7 +997,8 @@ rm -f "$WORK/bin/incus"
 sed -n '/^incus_preflight_check() {/,/^}/p' "$INSTALLER" >"$WORK/incus-preflight-fn.sh"
 grep -q '^incus_preflight_check() {' "$WORK/incus-preflight-fn.sh" ||
     die "incus_preflight_check extraction lost the function"
-sed -n '/^virtiofsd_probe() {/,/^}/p' "$INSTALLER" >"$WORK/incus-probe-fn.sh"
+sed -n '/^virtiofsd_probe() {/,/^}/p' "$INSTALLER" | sed "s|/usr/lib/virtiofsd|$WORK/absent-virtio-2|; s|/usr/lib/qemu/virtiofsd|$WORK/absent-virtio-3|" >"$WORK/incus-probe-fn.sh"
+sed -n '/^incus_agent_probe() {/,/^}/p' "$INSTALLER" | sed "s|/usr/libexec/incus/incus-agent|$WORK/absent-agent-1|; s|/usr/lib/incus/incus-agent|$WORK/absent-agent-2|; s|/usr/libexec/incus-agent|$WORK/absent-agent-3|; s|/usr/lib/incus/agents|$WORK/agents-usrlib|; s|/usr/libexec/incus/agents|$WORK/agents-usrlibexec|; s|/usr/share/incus/agents|$WORK/agents-usrshare|" >>"$WORK/incus-probe-fn.sh"
 grep -q '^virtiofsd_probe() {' "$WORK/incus-probe-fn.sh" ||
     die "virtiofsd_probe extraction lost the function"
 sed -n '/^install_incus_step() {/,/^}/p' "$INSTALLER" >"$WORK/incus-step-fn.sh"
@@ -1001,6 +1013,9 @@ p_note() { printf 'note  %s\n' "$*"; }
 p_fail() { printf 'FAIL  %s\n' "$*"; PREFLIGHT_FAILURES=$((PREFLIGHT_FAILURES + 1)); }
 fail() { printf 'FAIL  %s\n' "$*" >&2; exit 1; }
 approve() { printf 'approve: %s\n' "$*"; }
+template_instance_for_profile() { [ "${TEST_SEALED:-0}" = 1 ] && printf 'sandbox-template-test\n'; }
+template_sealed() { [ "${TEST_SEALED:-0}" = 1 ]; }
+SITE_BOOTSTRAP_PROFILE=test
 EOF
 cat >"$WORK/bin/apt-get" <<'EOF'
 #!/bin/sh
@@ -1010,7 +1025,8 @@ if [ "${INCUS_ACQUIRE_MOCK:-}" = both ] || [ "${INCUS_ACQUIRE_MOCK:-}" = incus-o
     chmod 0755 "$INCUS_ACQUIRED_BIN/incus"
     if [ "$INCUS_ACQUIRE_MOCK" = both ]; then
         printf '#!/bin/sh\nexit 0\n' >"$INCUS_ACQUIRED_BIN/virtiofsd"
-        chmod 0755 "$INCUS_ACQUIRED_BIN/virtiofsd"
+        printf '#!/bin/sh\nexit 0\n' >"$INCUS_ACQUIRED_BIN/incus-agent"
+        chmod 0755 "$INCUS_ACQUIRED_BIN/virtiofsd" "$INCUS_ACQUIRED_BIN/incus-agent"
     fi
 fi
 EOF
@@ -1132,11 +1148,13 @@ INSTALL_INCUS=0
 # T4: present Incus and virtiofsd: ok, no acquisition, no apt call.
 printf '#!/bin/sh\necho /usr/bin/incus\n' >"$WORK/incus-boundary-bin/incus"
 printf '#!/bin/sh\necho /usr/bin/virtiofsd\n' >"$WORK/incus-boundary-bin/virtiofsd"
-chmod +x "$WORK/incus-boundary-bin/incus" "$WORK/incus-boundary-bin/virtiofsd"
+printf '#!/bin/sh\nexit 0\n' >"$WORK/incus-boundary-bin/incus-agent"
+chmod +x "$WORK/incus-boundary-bin/incus" "$WORK/incus-boundary-bin/virtiofsd" "$WORK/incus-boundary-bin/incus-agent"
 : >"$INCUS_APT_LOG"
 out=$(run_incus_boundary "$ROOT/plugins/install-incus/incus-install.sh" 2>&1)
 assert_contains "$out" "ok    incus present" "T4 incus present wording"
 assert_contains "$out" "ok    virtiofsd present" "T4 virtiofsd present wording"
+assert_contains "$out" "ok    Incus host agent present" "T4 Incus agent present"
 assert_contains "$out" "boundary failures=0 needed=0" "T4 no acquisition needed"
 out=$(run_incus_step "$ROOT/plugins/install-incus/incus-install.sh" 0 2>&1) ||
     die "T4: the step must be a no-op when Incus is present: $out"
@@ -1149,7 +1167,77 @@ rm -f "$WORK/incus-boundary-bin/virtiofsd"
 out=$(run_incus_boundary "$ROOT/plugins/install-incus/incus-install.sh" 2>&1)
 assert_contains "$out" "FAIL  virtiofsd is missing" "T5 virtiofsd refusal wording"
 assert_contains "$out" "boundary failures=1 needed=0" "T5 virtiofsd counter"
+mv "$WORK/incus-boundary-bin/incus-agent" "$WORK/incus-boundary-bin/virtiofsd"
+out=$(run_incus_boundary "$ROOT/plugins/install-incus/incus-install.sh" 2>&1)
+assert_contains "$out" "FAIL  Incus host agent is missing" "T6 missing Incus agent refusal"
+assert_contains "$out" "boundary failures=1 needed=0" "T6 Incus agent counter"
+TEST_SEALED=1
+export TEST_SEALED
+out=$(run_incus_boundary "$ROOT/plugins/install-incus/incus-install.sh" 2>&1)
+assert_contains "$out" "WARNING: Incus host agent is missing" "T6 existing sealed template warning"
+assert_contains "$out" "boundary failures=0 needed=0" "T6 existing sealed template allowed"
+unset TEST_SEALED
 rm -f "$WORK/incus-boundary-bin/incus"
+
+sed -n '/^go_version_at_least() {/,/^}/p' "$INSTALLER" >"$WORK/portability-go.sh"
+(
+    # shellcheck disable=SC1090
+    . "$WORK/portability-go.sh"
+    go_version_at_least go1.23.0 1.23 && go_version_at_least go1.100.1 1.23 &&
+        go_version_at_least go1.27.4-X:nodwarf5 1.23 && go_version_at_least go1.24rc1 1.23 ||
+        die "Go minimum rejected a supported version or suffix"
+    if go_version_at_least go1.22.99 1.23 || go_version_at_least go1.22rc1 1.23 ||
+        go_version_at_least garbage 1.23 || go_version_at_least go 1.23; then
+        die "Go minimum accepted an old, empty, or garbage version"
+    fi
+)
+(
+    # shellcheck disable=SC1090
+    . "$WORK/incus-probe-fn.sh"
+    mkdir -p "$WORK/agents-usrlib" "$WORK/agent-path" "$WORK/incus-agent-bin"
+    cat >"$WORK/incus-agent-bin/uname" <<'EOF'
+#!/bin/sh
+printf '%s\n' x86_64
+EOF
+    /bin/chmod +x "$WORK/incus-agent-bin/uname"
+    # shellcheck disable=SC2123
+    PATH=$WORK/incus-agent-bin
+    printf '#!/bin/sh\nexit 0\n' >"$WORK/agents-usrlib/incus-agent.linux.x86_64"
+    /bin/chmod +x "$WORK/agents-usrlib/incus-agent.linux.x86_64"
+    incus_agent_path=
+    unset INCUS_AGENT_PATH
+    incus_agent_probe &&
+        [ "$incus_agent_path" = "$WORK/agents-usrlib/incus-agent.linux.x86_64" ] ||
+        die "Incus architecture-specific agents directory was not detected"
+    /bin/rm -f "$WORK/agents-usrlib/incus-agent.linux.x86_64"
+    printf '#!/bin/sh\nexit 0\n' >"$WORK/agent-path/incus-agent.linux.x86_64"
+    /bin/chmod +x "$WORK/agent-path/incus-agent.linux.x86_64"
+    INCUS_AGENT_PATH=$WORK/agent-path
+    export INCUS_AGENT_PATH
+    incus_agent_path=
+    incus_agent_probe && [ "$incus_agent_path" = "$WORK/agent-path/incus-agent.linux.x86_64" ] ||
+        die "INCUS_AGENT_PATH architecture-specific agent was not detected"
+)
+(
+    # shellcheck disable=SC1090
+    . "$WORK/incus-probe-fn.sh"
+    # Only the fixture tools are visible in the fallback-path tests.
+    # shellcheck disable=SC2123
+    PATH=$WORK/incus-step-bin
+    virtiofsd_path=
+    for active_index in 1 2 3; do
+        /bin/rm -f "$WORK/virtio-libexec" "$WORK/virtio-lib" "$WORK/virtio-qemu"
+        set -- "$WORK/virtio-libexec" "$WORK/virtio-lib" "$WORK/virtio-qemu"
+        case "$active_index" in
+            1) active=$1 ;;
+            2) active=$2 ;;
+            3) active=$3 ;;
+        esac
+        printf '#!/bin/sh\nexit 0\n' >"$active"
+        chmod +x "$active"
+        virtiofsd_probe "$@" && [ "$virtiofsd_path" = "$active" ] || die "virtiofsd fallback $active_index was not found"
+    done
+)
 
 # Exercise the initializer's actual EXIT trap in a child shell. Its normal
 # path clears the preseed filename before exiting.

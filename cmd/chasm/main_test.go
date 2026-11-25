@@ -571,6 +571,12 @@ func TestMissingDefaultSandboxFailsClosedNamingTheKey(t *testing.T) {
 }
 
 func TestPrivilegedShellIsIdentityAndManagedNameBoundAndNeverEntersGuestRoot(t *testing.T) {
+	previousTarget := shellTargetError
+	shellTargetError = func(string, string) string { return "" }
+	t.Cleanup(func() { shellTargetError = previousTarget })
+	previousResolver := resolvePrivilegedIncusSocket
+	resolvePrivilegedIncusSocket = func() (string, error) { return "/run/incus/unix.socket", nil }
+	t.Cleanup(func() { resolvePrivilegedIncusSocket = previousResolver })
 	var got invocation
 	hostChecks := 0
 	values := map[string]string{"SUDO_USER": "chasmops", "TERM": "screen-256color"}
@@ -579,7 +585,7 @@ func TestPrivilegedShellIsIdentityAndManagedNameBoundAndNeverEntersGuestRoot(t *
 		return nil
 	}, captureExecutor(&got), discardFile(t), discardFile(t))
 	joined := strings.Join(got.arguments, " ")
-	if code != 0 || hostChecks != 1 || got.path != incusPath {
+	if code != 0 || hostChecks != 1 || got.path != incusPath || !strings.Contains(strings.Join(got.environment, "\n"), "INCUS_SOCKET=/run/incus/unix.socket") {
 		t.Fatalf("code=%d host_checks=%d invocation=%+v", code, hostChecks, got)
 	}
 	for _, required := range []string{"--force-local exec sandbox-research", "--user 1001", "--group 1001", "--cwd /home/agent", "/usr/bin/zsh -l"} {
@@ -808,5 +814,27 @@ func TestUnsafeTerminalValueFallsBackInsideGuest(t *testing.T) {
 	joined := strings.Join(shellArguments("sandbox-research", safeTerm("xterm;id"), 1001), " ")
 	if !strings.Contains(joined, "TERM=xterm-256color") || strings.Contains(joined, ";id") {
 		t.Fatalf("unsafe terminal reached invocation: %s", joined)
+	}
+}
+
+func TestPrivilegedShellRefusesInitializingBeforeDispatch(t *testing.T) {
+	previousResolver, previousTarget := resolvePrivilegedIncusSocket, shellTargetError
+	t.Cleanup(func() { resolvePrivilegedIncusSocket = previousResolver; shellTargetError = previousTarget })
+	resolvePrivilegedIncusSocket = func() (string, error) { return "/run/incus/unix.socket", nil }
+	shellTargetError = func(socket, instance string) string {
+		if socket != "/run/incus/unix.socket" || instance != managedInstanceName("research") {
+			t.Fatal("wrong target")
+		}
+		return "target_initializing"
+	}
+	stderr, err := os.CreateTemp(t.TempDir(), "stderr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stderr.Close()
+	code := runPrivilegedShell([]string{"__shell", "research"}, 0, testEnvironment(map[string]string{"SUDO_USER": siteconfig.Active().OperatorUser}), func() error { return nil }, func(string, []string, []string) error { t.Fatal("guest dispatched"); return nil }, stderr)
+	data, err := os.ReadFile(stderr.Name())
+	if err != nil || code != 125 || !strings.Contains(string(data), "sandbox research is still initializing; wait for `chasm start` to finish and retry") {
+		t.Fatalf("code=%d stderr=%q err=%v", code, data, err)
 	}
 }

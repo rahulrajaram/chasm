@@ -1,7 +1,7 @@
 // Command chasm is the small human-facing sandbox CLI.
-// All non-interactive operations stay on the audited supervisor/executor
-// socket. Interactive entry is a separate, exact sudoers command that enters
-// one validated managed instance as the unprivileged agent user.
+// Lifecycle operations use the audited supervisor/executor socket. Shell
+// and foreground execution use separate sudo entries and enter validated
+// managed instances as the unprivileged guest user.
 package main
 
 import (
@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/rahulrajaram/chasm/internal/hostidentity"
+	"github.com/rahulrajaram/chasm/internal/incuslocal"
 	"github.com/rahulrajaram/chasm/internal/protocol"
 	"github.com/rahulrajaram/chasm/internal/siteconfig"
 )
@@ -27,6 +28,8 @@ const (
 	maxSandboxNameLen = 32
 )
 
+var resolvePrivilegedIncusSocket = incuslocal.ConfiguredSocketPath
+
 var (
 	errInvalidName         = errors.New("sandbox names must be 1-32 lowercase letters, digits, or hyphens, and must start and end with a letter or digit")
 	errManagedPrefixName   = errors.New("NAME must be the logical sandbox name; chasm adds the sandbox- prefix itself, so a sandbox- NAME would double-prefix")
@@ -37,22 +40,36 @@ var (
 type executor func(path string, arguments, environment []string) error
 
 type delegation struct {
-	path      string
-	arguments []string
+	path       string
+	arguments  []string
+	jsonOutput bool
 }
 
 func main() {
-	os.Exit(boot(os.Args[1:], siteconfig.InitDefault, os.Stdout, os.Stderr))
+	arguments := os.Args[1:]
+	initSite := siteconfig.InitDefault
+	if os.Geteuid() == 0 && len(arguments) > 0 && arguments[0] == "__exec" {
+		initSite = func() error { return siteconfig.Init(siteconfig.DefaultPath) }
+	}
+	os.Exit(boot(arguments, initSite, os.Stdout, os.Stderr))
 }
 
 // boot dispatches help before the site descriptor is read — the same
 // ordering chasmctl uses — so `chasm help`, `chasm help COMMAND`, and the
 // --help forms work on a host whose descriptor is missing, unreadable, or
-// invalid instead of failing at the descriptor. Every other invocation
-// binds the descriptor first and then runs.
+// invalid instead of failing at the descriptor. Doctor handles descriptor
+// failures as observations. Other commands bind the site before dispatch.
 func boot(arguments []string, initSite func() error, stdout, stderr *os.File) int {
 	if topic, requested, err := requestedHelp(arguments); requested {
 		return helpExit(topic, err, stdout, stderr)
+	}
+	if len(arguments) > 0 {
+		switch arguments[0] {
+		case "doctor":
+			return runDoctor(arguments[1:], os.Geteuid(), stdout, stderr)
+		case "__doctor":
+			return runDoctorHelper(arguments[1:], os.Geteuid(), os.Getenv, stdout)
+		}
 	}
 	if err := initSite(); err != nil {
 		fmt.Fprintf(stderr, "chasm: site config: %v\n", err)
@@ -76,9 +93,15 @@ func run(arguments []string, effectiveUID int, getenv func(string) string, requi
 	if len(arguments) > 0 && arguments[0] == "__shell" {
 		return runPrivilegedShell(arguments, effectiveUID, getenv, requireHost, execute, stderr)
 	}
+	if len(arguments) > 0 && arguments[0] == "__exec" {
+		return runPrivilegedExec(arguments[1:], effectiveUID, getenv, requireHost, os.Stdin, stdout)
+	}
 	if effectiveUID == 0 {
 		fmt.Fprintln(stderr, "chasm: commands must run as the operator, not root")
 		return 1
+	}
+	if len(arguments) > 0 && arguments[0] == "exec" {
+		return runExec(arguments[1:], getenv, os.Stdin, stdout, stderr)
 	}
 
 	invocation, err := parseOperatorCommand(stripEndOfOptions(arguments), arguments)
@@ -86,7 +109,15 @@ func run(arguments []string, effectiveUID int, getenv func(string) string, requi
 		reportUsageError(stderr, arguments, err)
 		return 2
 	}
-	return executeOrReport(execute, invocation.path, invocation.arguments, controlEnvironment(getenv), stderr)
+	environment := controlEnvironment(getenv)
+	if invocation.jsonOutput {
+		for i, entry := range environment {
+			if entry == "SANDBOXING_OUTPUT=human" {
+				environment[i] = "SANDBOXING_OUTPUT=json"
+			}
+		}
+	}
+	return executeOrReport(execute, invocation.path, invocation.arguments, environment, stderr)
 }
 
 // helpExit answers a parsed help request. The request's own errors (an
@@ -311,6 +342,15 @@ func resizeDelegation(operands []string) (delegation, error) {
 }
 
 func showDelegation(operands []string) (delegation, error) {
+	if len(operands) > 0 && operands[len(operands)-1] == "--json" {
+		invocation, err := showDelegationWithoutJSON(operands[:len(operands)-1])
+		invocation.jsonOutput = true
+		return invocation, err
+	}
+	return showDelegationWithoutJSON(operands)
+}
+
+func showDelegationWithoutJSON(operands []string) (delegation, error) {
 	if len(operands) == 0 {
 		return controlDelegation("sandbox-status"), nil
 	}
@@ -502,7 +542,17 @@ func runPrivilegedShell(arguments []string, effectiveUID int, getenv func(string
 		fmt.Fprintf(stderr, "chasm: host identity check failed: %v\n", err)
 		return 1
 	}
-	return executeOrReport(execute, incusPath, shellArguments(managedInstanceName(name), safeTerm(getenv("TERM")), siteconfig.Active().GuestUID), baseEnvironment(getenv), stderr)
+	socketPath, err := resolvePrivilegedIncusSocket()
+	if err != nil {
+		fmt.Fprintf(stderr, "chasm: local Incus socket unavailable: %v\n", err)
+		return 1
+	}
+	if code := shellTargetError(socketPath, managedInstanceName(name)); code != "" {
+		fmt.Fprintf(stderr, "chasm: %s\n", execResultMessage(code, name))
+		return 125
+	}
+	environment := append(baseEnvironment(getenv), "INCUS_SOCKET="+socketPath)
+	return executeOrReport(execute, incusPath, shellArguments(managedInstanceName(name), safeTerm(getenv("TERM")), siteconfig.Active().GuestUID), environment, stderr)
 }
 
 func executeOrReport(execute executor, path string, arguments, environment []string, stderr *os.File) int {

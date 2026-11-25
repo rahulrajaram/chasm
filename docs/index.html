@@ -1,10 +1,10 @@
 ---
 layout: landing
-title: A persistent Linux machine for your coding agent
+title: Long-horizon VMs for long-horizon agents
 description: Chasm gives each coding agent its own Linux VM on your own machine. Its disk, packages and workspace stay put between sessions, for as long as you keep it.
 ---
 <section class="hero">
-  <h1>A persistent Linux machine for your coding agent</h1>
+  <h1>Long-horizon VMs for long-horizon agents</h1>
   <p class="lede">Chasm gives each coding agent its own Linux VM on your own machine. Its disk, packages and workspace stay put between sessions. Leave it running for weeks, stop it and pick up later, or delete it when you’re done.</p>
   <div class="hero__actions">
     <a class="button" href="#install">Install Chasm</a>
@@ -29,14 +29,14 @@ description: Chasm gives each coding agent its own Linux VM on your own machine.
 </section>
 <section class="section" id="install">
   <h2>Install</h2>
-  <p>On Debian 13 or Ubuntu 24.04+ (x86_64) with KVM (nested virtualization disabled) and Go 1.23 or newer on root’s <code>PATH</code>:</p>
+  <p>On Debian 13 (x86_64) with KVM (nested virtualization disabled) and Go 1.23 or newer on root’s <code>PATH</code>:</p>
 {% highlight bash %}
 git clone https://github.com/rahulrajaram/chasm.git
 cd chasm
 sudo scripts/install-chasm.sh --provision --install-incus
 sudo scripts/install-chasm.sh --verify
 {% endhighlight %}
-  <p>The default storage pool needs 74 GiB free. On a smaller disk, use the <a href="install.html#compact-install">compact install</a>. <a href="install.html#requirements-recap">Full requirements →</a></p>
+  <p>The default storage pool needs 74 GiB free. On a smaller disk, use the <a href="install.html#compact-install">compact install</a>. Ubuntu, Fedora and Arch are tested too, with their packages installed by hand. <a href="install.html#requirements-recap">Full requirements →</a></p>
 </section>
 <section class="section">
   <h2>Run your agent</h2>
@@ -45,6 +45,9 @@ sudo scripts/install-chasm.sh --verify
 chasm create demo
 chasm start demo
 chasm shell demo
+
+# Or run one command from the host, with its exit status passed back
+chasm exec demo -- uname -a
 
 # Back on the host: keep it for later, or throw it away
 chasm stop demo

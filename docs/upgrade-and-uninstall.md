@@ -28,6 +28,14 @@ installation and any site data you choose to delete.
    margin plus the room the pool can still grow into, and the site
    bridge's own route into the sandbox prefix is accepted.
 
+   Current upgrades install the operator CLIs in `/usr/local/bin/` and the
+   service executables in `/usr/local/sbin/`. They replace payloads at both
+   `/usr/local/lib/chasm/go/` and `/usr/local/libexec/chasm/` with
+   compatibility symlinks to those installed files. Verification checks
+   both the new systemd executable paths and the compatibility links.
+   A persisted Incus socket override remains in `/etc/chasm/incus-socket`
+   (root:root 0600).
+
 2. Watch the drift report's template probe. The sealed template carries a
    versioned identity digest over its inputs: the builder and identity scripts,
    the package layer and profile reader, the guest `zshrc`, the base image
@@ -130,7 +138,10 @@ rm -f  /usr/local/bin/chasm /usr/local/bin/chasmctl
 # built from plugins/clipboard (it is no longer part of the core payload)
 rm -f  /usr/local/bin/chasm-clipboard
 rm -f  /usr/local/sbin/chasm-firewall
+rm -f  /usr/local/sbin/chasm-executor-server \
+       /usr/local/sbin/chasm-supervisor-server
 rm -rf /usr/local/lib/chasm
+rm -rf /usr/local/libexec/chasm     # interim compatibility links
 rm -rf /var/lib/chasm               # state, catalog, audit log, build receipts
 rm -rf /etc/chasm                   # descriptor, identity marker, firewall template
 

@@ -578,3 +578,42 @@ func renderSandboxLayout(output io.Writer, layout humanSandboxLayout) {
 	fmt.Fprintln(output)
 	fmt.Fprintf(output, "%d %s · %s\n", len(layout.Entries), pluralize("entry", len(layout.Entries)), freshnessLabel(layout.Freshness))
 }
+
+func renderLifecycleObservations(stdout io.Writer, result map[string]interface{}) {
+	if result["lifecycle_observations_unavailable"] == true {
+		fmt.Fprintln(stdout, "Lifecycle timings unavailable.")
+		return
+	}
+	observations, ok := result["lifecycle_observations"].([]interface{})
+	if !ok || len(observations) == 0 {
+		return
+	}
+	fmt.Fprintln(stdout, "Lifecycle timings")
+	for _, entry := range observations {
+		observation, _ := entry.(map[string]interface{})
+		operation := stringField(observation, "operation")
+		switch operation {
+		case "create", "start", "stop":
+		default:
+			continue
+		}
+		timings, _ := observation["phase_timings_ms"].(map[string]interface{})
+		outcome := "failed"
+		if observation["ok"] == true {
+			outcome = "ok"
+		}
+		fmt.Fprintf(stdout, "  %s (%s)", operation, outcome)
+		for _, phase := range []struct{ key, label string }{
+			{"total", "total"}, {"provisioning", "provisioning"}, {"clone", "clone"}, {"boot", "boot"},
+			{"guest_agent_ready", "guest agent"}, {"shutdown_request", "shutdown"}, {"stopped_confirmation", "stopped confirmation"},
+			{"provisioning_clone", "provisioning clone"}, {"provisioning_boot", "provisioning boot"},
+			{"provisioning_guest_agent_ready", "provisioning guest agent"},
+			{"provisioning_shutdown_request", "provisioning shutdown"}, {"provisioning_stopped_confirmation", "provisioning stopped confirmation"},
+		} {
+			if millis, ok := humanInteger(timings[phase.key]); ok && millis >= 0 {
+				fmt.Fprintf(stdout, "  %s %d ms", phase.label, millis)
+			}
+		}
+		fmt.Fprintln(stdout)
+	}
+}

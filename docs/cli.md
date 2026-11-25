@@ -26,7 +26,7 @@ stores the text `--text`.
 | Command | Form |
 | ------- | ---- |
 | `create` | `chasm create NAME [BUDGET_MEMORY_MIB] [--memory MIB] [--cpu N]` |
-| `show` | `chasm show [NAME] [--layout]` |
+| `show` | `chasm show [NAME] [--layout] [--json]` |
 | `resize` | `chasm resize NAME [--memory SIZE] [--cpu N] [--root-disk SIZE]` |
 | `describe` | `chasm describe NAME [--set TEXT \| --clear]` |
 | `repos` | `chasm repos [REPOSITORY]` |
@@ -36,6 +36,8 @@ stores the text `--text`.
 | `stop` | `chasm stop [NAME]` |
 | `delete` | `chasm delete NAME` |
 | `shell` | `chasm shell [NAME]` |
+| `doctor` | `chasm doctor [--json]` |
+| `exec` | `chasm exec NAME [--cwd DIR] [--env KEY=VALUE ...] [--status-fd FD] -- COMMAND [ARG ...]` |
 
 ### `create NAME [BUDGET_MEMORY_MIB] [--memory MIB] [--cpu N]`
 
@@ -77,7 +79,7 @@ The root disk and `/workspace` are separate storage objects on the site's
 Incus pool. Host administrators can access both. A workload can still
 copy its own files to `/shared` or send them over the network.
 
-### `show [NAME] [--layout]`
+### `show [NAME] [--layout] [--json]`
 
 `chasm show NAME` displays that sandbox's details and resources. With no NAME,
 `chasm show` displays the site's `default_sandbox` status, the site services,
@@ -86,6 +88,14 @@ and host/pool information; without a `default_sandbox`, NAME is required.
 levels. Running
 sandboxes are observed live; paused or stopped ones return the last saved
 observation or report that they have not yet been observed.
+
+The detail view includes the latest recorded create, start, and stop
+attempts for that sandbox. Timings are elapsed milliseconds. They cover
+observed phases such as cloning, boot, guest-agent readiness, shutdown,
+and stopped-state confirmation. Older sandboxes can have no timing history.
+Use `--json` to read the same observations under `lifecycle_observations`.
+Each entry includes the operation, timestamp, request ID, outcome, and
+`phase_timings_ms`. Lifecycle audit entries carry the same phase durations.
 
 After the detail fields, `show` prints a Resources section that reports
 each resource from every angle that can disagree (idiom 2). Every value names
@@ -210,6 +220,64 @@ wrapped in the standalone `chasm-clipboard` helper (see
 terminal session. For remote hosts, run
 `chasm-clipboard -- ssh -t HOST chasm shell NAME` on the desktop.
 
+### `doctor [--json]`
+
+Run as the configured operator to check the installed host and site. Doctor
+validates the descriptor before using the installed read-only sudo helper.
+It inspects service state without activating the Chasm sockets and queries
+Incus only when its daemon is already running and the site identity matches.
+Guest readiness uses the VM's existing state and process-count evidence.
+
+The default output is human-readable. JSON reports `version: 1` and a
+`checks` array. Each check includes an `id`, `status`, `summary`, and
+`source`, along with a `remedy` when applicable. Status values are
+`ok`, `warn`, `fail`, and `skipped`. A failed check returns exit 1.
+Warnings and skipped checks leave the exit status at 0 when no check fails.
+Doctor returns usage exit 2 for invalid arguments.
+
+### `exec NAME -- COMMAND [ARG ...]`
+
+Run a foreground command in a running sandbox as the site's unprivileged
+guest user. The mandatory `--` ends Chasm options. Arguments after it are
+passed directly to Incus, including empty arguments and shell metacharacters.
+Use an explicit shell command when you need guest-side shell evaluation.
+
+```sh
+chasm exec research --cwd /workspace --env MODE=check -- /usr/bin/printenv MODE
+printf 'input\n' | chasm exec research -- /usr/bin/cat
+chasm exec research --status-fd 3 -- /usr/bin/false 3>exec-status.json
+```
+
+The default working directory is `/home/agent`. Set guest environment
+variables with repeated `--env KEY=VALUE` options. Keys must be unique.
+Stdin, stdout, and stderr are separate byte streams, with no terminal
+allocation. Send `Ctrl-C` to request termination. Chasm sends TERM, gives
+the command two seconds to finish, and attempts KILL if it is still running.
+An abandoned client connection also triggers cleanup. Incus signals the
+primary guest command. Detached descendants are outside that guarantee.
+
+Chasm admits eight foreground execs per site. Requests can carry up to
+256 argv entries and 64 environment variables, with a 16 KiB limit per
+argument or value and a 64 KiB encoded request limit. The root-owned
+`exec-audit.jsonl` file is capped at 64 MiB; once full, admission fails
+closed until an administrator archives and clears it.
+
+The optional status descriptor must be writable, inherited, and numbered
+3 or higher. It receives one JSON line with `version`, `disposition`, and
+available fields including `request_id`, `code`, `guest_status`, `output_code`,
+`signal_sent`, and `timings_ms`. Dispositions are `completed`, `rejected`,
+`interrupted`, and `outcome_unknown`. A `signal_sent` value records the last
+signal written to the Incus control channel. It does not confirm which
+signal caused exit. Incus can synthesize return code 129 on VM disconnect.
+Chasm reports `outcome_unknown` and retains that code as `incus_return`.
+An `output_code` of `output_incomplete` means output could not be fully
+delivered. If the guest exited 0, the CLI exits 125 so truncated output is
+never reported as process success; `guest_status` still records 0. Other
+confirmed guest statuses pass through. Slow output consumers block delivery
+without cancelling the guest; a closed output pipe triggers cleanup.
+See [Drive a sandbox from an agent](agent-workflow.md) for a complete
+automation example.
+
 ### Compatibility commands
 
 `list`, `status`, `inspect`, `layout`, and `locate` are retained for
@@ -273,6 +341,15 @@ successfully writes the requested topic. A failure to write help or a
 validating arguments, so a missing configuration can produce status 1 first.
 The interactive shell delegates to the guest shell through sudo and Incus, and
 its exit status reflects the delegated process.
+
+`chasm exec` preserves a confirmed nonzero guest exit code and an exit 0 when
+output was fully delivered. A completed guest exit 0 with incomplete output
+returns reserved code 125; `--status-fd` still reports `guest_status: 0`.
+Its own codes 124
+(completion unknown), 125 (rejected), and 126 (local setup failure) can
+coincide with guest exit codes. Use `--status-fd` for certainty. A usage
+error returns 2 before status delivery. Treat an absent status frame as
+unconfirmed and inspect the guest before retrying a command with side effects.
 
 For automation, inspect the resulting sandbox state before retrying a failed
 state-changing request. An audit persistence error can follow a successful

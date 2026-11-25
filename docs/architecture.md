@@ -22,13 +22,25 @@ typical command. The security consequences are drawn out in
   and a root-owned entry helper to open a shell in the VM as the guest
   user. Lifecycle and observation commands never touch Incus themselves:
   they are delegated to the unprivileged supervisor, and only the
-  root executor (its sole client) invokes Incus on their behalf. The one
-  exception is the interactive shell: through the sudo grant, the
+  root executor (its sole client) invokes Incus on their behalf. For
+  the interactive shell, the
   root-owned `chasm __shell` entry executes a fixed `/usr/bin/incus exec`
   invocation as the guest user (`cmd/chasm/main.go`, `runPrivilegedShell`);
   only the sudo approval itself is non-interactive (`sudo -n`), while the
   guest shell it launches is interactive (`--mode interactive`,
-  `/usr/bin/zsh -l`). chasm never grants general Incus or root access.
+  `/usr/bin/zsh -l`). Foreground `chasm exec` uses the exact `chasm __exec`
+  sudo entry with a bounded framed request over pipes. The helper checks
+  the site pin, the sandbox's managed metadata, and the local Incus peer
+  UID. It opens separate non-interactive WebSocket streams for stdin,
+  stdout, stderr, and signal control. Exec stays outside the serial
+  lifecycle request loop and uses eight independent, file-locked slots.
+- **Installed executables** — `/usr/local/bin/chasm` and `chasmctl` are
+  operator CLIs; sudo re-execs `/usr/local/bin/chasm` for the exact internal
+  entries. systemd starts `/usr/local/sbin/chasm-executor-server` and
+  `/usr/local/sbin/chasm-supervisor-server`. SELinux enforcing hosts verify
+  `bin_t` on these installed files after `restorecon`. Older payload paths
+  under `/usr/local/lib/chasm/go/` and `/usr/local/libexec/chasm/` are
+  compatibility links, not systemd entry points.
 - **`cmd/chasmctl`** — the operator-level CLI over the supervisor.
   JSON by default.
 - **`cmd/executor_server`** (`chasm-executor.service`, **root**) — the
@@ -94,17 +106,19 @@ typical command. The security consequences are drawn out in
 | Operator → supervisor | Unix socket, root-owned, operator group, mode 0660; supervisor checks the peer uid against an allowlist |
 | Supervisor → executor | Unix socket, root-owned, supervisor group, mode 0660; executor rejects any peer uid other than the supervisor's, before parsing anything |
 | Operator → VM shell | sudoers grant naming only the `chasm __shell` entry helper; the helper checks the invoking operator, the single sandbox name, and the site identity pin, then runs the shell as the site's guest uid/gid |
-| Host ↔ guest | Full VM boundary: shared volumes are virtiofs disk shares, not host paths. Chasm provisions no host credentials into the guest: shell entry passes a fixed environment, and the template seal rejects `~/.netrc`, `~/.git-credentials`, and a non-empty `~/.ssh`. Anything an operator places in `/workspace` or `/shared` is readable from the guest. |
+| Operator → foreground guest command | Exact `chasm __exec` sudo entry. The helper validates and audits framed requests, checks the VM's managed metadata (including that setup has finished), and runs the command as the site's fixed guest UID/GID. |
+| Host ↔ guest | Full VM boundary: shared volumes are virtiofs disk shares, not host paths. Chasm provisions no host credentials into the guest: shell and exec entry pass a fixed environment, and the template seal rejects `~/.netrc`, `~/.git-credentials`, and a non-empty `~/.ssh`. Anything an operator places in `/workspace` or `/shared` is readable from the guest. |
 | Guest → network | The nftables `inet chasm` table admits IPv4 DHCP/DNS to the host, drops routed IPv6 and private/reserved IPv4, and does not filter public IPv4 destinations. Switching between guests on the same bridge is outside these rules. |
-| Anything → privileged scripts | Runtime privileged entries (executor, `chasm __shell`, firewall helper, sandbox launcher, template builder) require the pinned site identity and refuse otherwise. Bootstrap and rendering steps run before the pin exists and validate the site descriptor instead. |
+| Anything → privileged scripts | Runtime privileged entries (executor, `chasm __shell`, `chasm __exec`, firewall helper, sandbox launcher, template builder) require the pinned site identity and refuse otherwise. Bootstrap and rendering steps run before the pin exists and validate the site descriptor instead. |
 
 **What runs as root:** `chasm-executor.service` and the helpers it launches,
 including the sandbox launcher and its private `chasmctl --local-admit-launch`
 admission check; `chasm-firewall.service`, which runs as root with its
 capability bounding set limited to `CAP_NET_ADMIN` and `CAP_NET_RAW`; and the
-narrow sudo entry path into `incus exec` for shells. The supervisor, ordinary
-`chasmctl` commands, `chasm`'s non-shell commands, and the clipboard helper
-never run privileged.
+narrow sudo entries for shells (`chasm __shell`), foreground commands
+(`chasm __exec`) and the read-only `chasm __doctor` probe. The supervisor,
+ordinary `chasmctl` commands, `chasm`'s other commands, and the clipboard
+helper never run privileged.
 
 ## Data flow: `chasm start research`
 

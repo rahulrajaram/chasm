@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/rahulrajaram/chasm/internal/incuslocal"
 	"github.com/rahulrajaram/chasm/internal/protocol"
 	"github.com/rahulrajaram/chasm/internal/siteconfig"
 )
@@ -32,12 +33,13 @@ const (
 	auditRoot           = "/var/lib/chasm/executor"
 	auditFileName       = "audit.jsonl"
 	supervisorStateRoot = "/var/lib/chasm/supervisor"
-	incusClientRoot     = "/run/chasm/incus-client"
-	incusSocket         = "/var/lib/incus/unix.socket"
 	maxIncusResponse    = 2 * 1024 * 1024
 
 	lifecycleLockPath = "/run/lock/chasm-lifecycle.lock"
 )
+
+var incusClientRoot = "/run/chasm/incus-client"
+var resolveIncusSocket = incuslocal.SocketPath
 
 // descriptionKey is the instance-config key carrying a sandbox's
 // description; the namespace derives from the site's resource prefix.
@@ -110,23 +112,28 @@ func SupervisorUID() int {
 
 // --- incus helpers ---
 
-func incusEnvironment() map[string]string {
+func incusEnvironment() (map[string]string, error) {
+	socketPath, err := resolveIncusSocket()
+	if err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(incusClientRoot, 0o700); err != nil {
-		return nil
+		return nil, fmt.Errorf("create private Incus client directory: %w", err)
 	}
 	var info syscall.Stat_t
 	if err := syscall.Lstat(incusClientRoot, &info); err != nil {
-		return nil
+		return nil, fmt.Errorf("inspect private Incus client directory: %w", err)
 	}
-	if info.Uid != 0 || info.Mode&0o777 != 0o700 {
-		return nil
+	if info.Uid != uint32(os.Geteuid()) || info.Mode&0o777 != 0o700 {
+		return nil, errors.New("private Incus client directory has unsafe ownership or mode")
 	}
 	return map[string]string{
-		"HOME":       incusClientRoot,
-		"INCUS_CONF": incusClientRoot,
-		"LANG":       "C.UTF-8",
-		"PATH":       "/usr/sbin:/usr/bin:/sbin:/bin",
-	}
+		"HOME":         incusClientRoot,
+		"INCUS_CONF":   incusClientRoot,
+		"INCUS_SOCKET": socketPath,
+		"LANG":         "C.UTF-8",
+		"PATH":         "/usr/sbin:/usr/bin:/sbin:/bin",
+	}, nil
 }
 
 func incusExec(arguments []string, stdin io.Reader, stdout io.Writer, passFDs []*os.File, timeout time.Duration) (int, error) {
@@ -137,19 +144,20 @@ func incusExec(arguments []string, stdin io.Reader, stdout io.Writer, passFDs []
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 	}
 	defer cancel()
+	values, err := incusEnvironment()
+	if err != nil {
+		return -1, err
+	}
 	cmd := exec.CommandContext(ctx, "incus", argv...)
-	cmd.Env = nil
-	if values := incusEnvironment(); values != nil {
-		cmd.Env = make([]string, 0, len(values))
-		for key, value := range values {
-			cmd.Env = append(cmd.Env, key+"="+value)
-		}
+	cmd.Env = make([]string, 0, len(values))
+	for key, value := range values {
+		cmd.Env = append(cmd.Env, key+"="+value)
 	}
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = io.Discard
 	cmd.ExtraFiles = passFDs
-	err := cmd.Run()
+	err = cmd.Run()
 	if ctx.Err() != nil {
 		return -1, ctx.Err()
 	}
@@ -169,12 +177,7 @@ func runScript(arguments []string, stdin io.Reader, timeout time.Duration) ([]by
 	cmd := exec.CommandContext(ctx, arguments[0], arguments[1:]...)
 	cmd.Dir = "/"
 	ownProcessGroup(cmd)
-	if values := incusEnvironment(); values != nil {
-		cmd.Env = make([]string, 0, len(values))
-		for key, value := range values {
-			cmd.Env = append(cmd.Env, key+"="+value)
-		}
-	}
+	cmd.Env = []string{"LANG=C.UTF-8", "PATH=/usr/sbin:/usr/bin:/sbin:/bin"}
 	cmd.Stdin = stdin
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -211,9 +214,21 @@ func incusQueryMetadata(path string, metadata interface{}) error {
 	if path != "/1.0/instances?recursion=1" && (!strings.HasPrefix(path, "/1.0/") || strings.ContainsAny(path, "?#")) {
 		return protoError("unsafe_state", "Incus API path is not permitted")
 	}
+	socketPath, err := resolveIncusSocket()
+	if err != nil {
+		return protoError("unsafe_state", "Incus local socket is unavailable")
+	}
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return (&net.Dialer{Timeout: 15 * time.Second}).DialContext(ctx, "unix", incusSocket)
+			conn, err := (&net.Dialer{Timeout: 15 * time.Second}).DialContext(ctx, "unix", socketPath)
+			if err != nil {
+				return nil, err
+			}
+			if err := incuslocal.RootPeer(conn); err == nil {
+				return conn, nil
+			}
+			_ = conn.Close()
+			return nil, errors.New("Incus socket peer is not authenticated as root")
 		},
 	}
 	client := &http.Client{Transport: transport, Timeout: 20 * time.Second}
@@ -435,7 +450,7 @@ func ensureGuestRunning(requestID string) (map[string]interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	return ensureSandboxRunning(instance, requestID)
+	return ensureSandboxRunning(instance, requestID, nil)
 }
 
 // sandboxInitialized reports whether the managed sandbox completed guest
@@ -447,23 +462,33 @@ var sandboxInitialized = func(instance string) bool {
 	return err == nil && code == 0 && strings.TrimSpace(string(buffer.Bytes())) == "true"
 }
 
-func ensureSandboxRunning(instance, requestID string) (map[string]interface{}, error) {
+func ensureSandboxRunning(instance, requestID string, timings lifecycleTimings) (map[string]interface{}, error) {
 	// The launcher takes the same lifecycle flock as this function, so
 	// provisioning must happen outside the lock. Leave an uninitialized target
 	// stopped; the governed admission check below must run before any start.
 	if !sandboxInitialized(instance) {
 		// Never adopt or start a managed sandbox whose guest was
 		// never initialized; run the launcher so provisioning completes first.
-		if err := runLauncher(instance, true); err != nil {
+		endProvision := timings.phase("provisioning")
+		var provisioning lifecycleTimings
+		if timings != nil {
+			provisioning = make(lifecycleTimings)
+		}
+		err := runLauncherWithBudget(instance, true, 0, provisioning)
+		endProvision()
+		for phase, duration := range provisioning {
+			timings["provisioning_"+phase] = duration
+		}
+		if err != nil {
 			return nil, err
 		}
 	}
 	return withLifecycleLock(func() (map[string]interface{}, error) {
-		return ensureSandboxRunningUnlocked(instance, requestID)
+		return ensureSandboxRunningUnlocked(instance, requestID, timings)
 	})
 }
 
-func ensureSandboxRunningUnlocked(instance, requestID string) (map[string]interface{}, error) {
+func ensureSandboxRunningUnlocked(instance, requestID string, timings lifecycleTimings) (map[string]interface{}, error) {
 	if err := requireManagedSandbox(instance); err != nil {
 		return nil, err
 	}
@@ -483,7 +508,10 @@ func ensureSandboxRunningUnlocked(instance, requestID string) (map[string]interf
 	started := false
 	switch status {
 	case "Stopped":
-		if code, err := incusExec([]string{"start", instance}, nil, nil, nil, 180*time.Second); err != nil || code != 0 {
+		endBoot := timings.phase("boot")
+		code, err := incusExec([]string{"start", instance}, nil, nil, nil, 180*time.Second)
+		endBoot()
+		if err != nil || code != 0 {
 			return nil, protoError("invalid_state", "sandbox instance could not be started")
 		}
 		started = true
@@ -495,11 +523,13 @@ func ensureSandboxRunningUnlocked(instance, requestID string) (map[string]interf
 		started = true
 	}
 
+	endReady := timings.phase("guest_agent_ready")
 	deadline := time.Now().Add(180 * time.Second)
 	for time.Now().Before(deadline) {
 		var ready bytes.Buffer
 		code, err := incusExec([]string{"exec", instance, "--", "/usr/bin/true"}, nil, &ready, nil, 15*time.Second)
 		if err == nil && code == 0 {
+			endReady()
 			confirmed, err := instanceStateFor(instance)
 			if err != nil {
 				return nil, protoError("postcondition_failed", "sandbox instance state is inconsistent")
@@ -515,6 +545,7 @@ func ensureSandboxRunningUnlocked(instance, requestID string) (map[string]interf
 		}
 		time.Sleep(2 * time.Second)
 	}
+	endReady()
 	return nil, protoError("guest_not_ready", "sandbox instance agent did not become ready")
 }
 
@@ -883,23 +914,25 @@ func stopGuest() (map[string]interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	return stopSandbox(instance)
+	return stopSandbox(instance, nil)
 }
 
-func stopSandbox(instance string) (map[string]interface{}, error) {
+func stopSandbox(instance string, timings lifecycleTimings) (map[string]interface{}, error) {
 	return withLifecycleLock(func() (map[string]interface{}, error) {
 		if err := requireManagedSandbox(instance); err != nil {
 			return nil, err
 		}
-		return stopSandboxWith(instance, func() (map[string]interface{}, error) {
+		return stopSandboxTimed(instance, func() (map[string]interface{}, error) {
 			return instanceStateFor(instance)
 		}, func() (int, error) {
 			// Best effort: a stale or failing catalog scan must not
 			// wedge the sandbox lifecycle; stop proceeds and the next
 			// successful scan refreshes the catalog.
 			_, _ = scanSandbox(instance)
+			endShutdown := timings.phase("shutdown_request")
+			defer endShutdown()
 			return incusStopInstance(instance)
-		})
+		}, timings)
 	})
 }
 
@@ -936,7 +969,7 @@ func withLifecycleLockAt(path string, expectedUID uint32, operation func() (map[
 	return operation()
 }
 
-func stopSandboxWith(instance string, readState instanceStateReader, stop instanceStopper) (map[string]interface{}, error) {
+func stopSandboxTimed(instance string, readState instanceStateReader, stop instanceStopper, timings lifecycleTimings) (map[string]interface{}, error) {
 	if !protocol.ValidSandboxInstance(instance) {
 		return nil, protoError("invalid_instance", "instance is not permitted")
 	}
@@ -957,7 +990,9 @@ func stopSandboxWith(instance string, readState instanceStateReader, stop instan
 	default:
 		return nil, protoError("invalid_state", "sandbox instance is neither running nor stopped")
 	}
+	endConfirmation := timings.phase("stopped_confirmation")
 	confirmed, err := readState()
+	endConfirmation()
 	if err != nil {
 		return nil, protoError("postcondition_failed", "sandbox instance state is inconsistent")
 	}
@@ -1141,6 +1176,7 @@ func inspectDefaultSandbox() (map[string]interface{}, error) {
 			})
 		}
 	}
+	attachLifecycleObservations(result, instance)
 	return result, nil
 }
 
@@ -1194,6 +1230,7 @@ var inspectSandbox = func(instance string) (map[string]interface{}, error) {
 	attachResources(result, func() (map[string]interface{}, error) {
 		return sandboxShowViews(instance, status, pid, state)
 	})
+	attachLifecycleObservations(result, instance)
 	return result, nil
 }
 
@@ -1303,11 +1340,15 @@ func mutateSandboxDescription(instance, description string) error {
 }
 
 func sandboxDescriptionFromMetadata(metadata map[string]interface{}) (string, error) {
+	return sandboxDescriptionFor(siteconfig.Active(), metadata)
+}
+
+func sandboxDescriptionFor(site siteconfig.Site, metadata map[string]interface{}) (string, error) {
 	config, ok := metadata["config"].(map[string]interface{})
 	if !ok {
 		return "", protoError("unsafe_state", "sandbox metadata is invalid")
 	}
-	raw, present := config[descriptionKey()]
+	raw, present := config[site.MetadataKey("description")]
 	if !present {
 		return "", nil
 	}
@@ -1326,24 +1367,37 @@ func loadSandboxMetadata(instance string) (map[string]interface{}, error) {
 	if err != nil {
 		return nil, protoError("invalid_state", "managed sandbox metadata is unavailable")
 	}
-	config, ok := metadata["config"].(map[string]interface{})
-	if !ok {
-		return nil, protoError("unsafe_state", "sandbox metadata is invalid")
-	}
-	if _, err := sandboxDescriptionFromMetadata(metadata); err != nil {
+	if err := ValidateManagedSandboxMetadata(instance, metadata); err != nil {
 		return nil, err
 	}
+	return metadata, nil
+}
+
+// ValidateManagedSandboxMetadata applies the same ownership checks to a
+// sandbox read by the lifecycle executor or the dedicated exec helper.
+func ValidateManagedSandboxMetadata(instance string, metadata map[string]interface{}) error {
+	return ValidateManagedSandboxMetadataFor(siteconfig.Active(), instance, metadata)
+}
+
+// ValidateManagedSandboxMetadataFor validates ownership using an explicit site.
+func ValidateManagedSandboxMetadataFor(site siteconfig.Site, instance string, metadata map[string]interface{}) error {
+	config, ok := metadata["config"].(map[string]interface{})
+	if !ok {
+		return protoError("unsafe_state", "sandbox metadata is invalid")
+	}
+	if _, err := sandboxDescriptionFor(site, metadata); err != nil {
+		return err
+	}
 	devices, devicesOK := metadata["devices"].(map[string]interface{})
-	site := siteconfig.Active()
 	if config[site.MetadataKey("managed")] != "true" ||
 		config[site.MetadataKey("logical-name")] != logicalSandboxName(instance) ||
 		config[site.MetadataKey("workspace-volume")] != site.WorkspaceVolumeName(instance) ||
 		config[site.MetadataKey("shared-volume")] != site.SharedVolumeName() || !devicesOK ||
 		!managedUntypedDiskConfigValid(devices["shared"], site.StoragePool, site.SharedVolumeName(), sharedPath) ||
 		!managedUntypedDiskConfigValid(devices["workspace"], site.StoragePool, site.WorkspaceVolumeName(instance), workspacePath) {
-		return nil, protoError("unsafe_state", "managed sandbox metadata is invalid")
+		return protoError("unsafe_state", "managed sandbox metadata is invalid")
 	}
-	return metadata, nil
+	return nil
 }
 
 // requireManagedSandbox is the seam for the managed-sandbox metadata check.
@@ -1365,6 +1419,33 @@ func managedUntypedDiskConfigValid(raw interface{}, pool, source, path string) b
 
 // Dispatch is the Go mirror of host_control dispatch().
 func Dispatch(request protocol.Request) (map[string]interface{}, error) {
+	return dispatchWithLifecycle(request, dispatch, requireManagedSandbox, saveLifecycleObservation, os.Stderr)
+}
+
+func dispatchWithLifecycle(request protocol.Request, execute Dispatcher, managed func(string) error,
+	save func(string, uint32, string, lifecycleObservation) error, log io.Writer) (map[string]interface{}, error) {
+	operation := lifecycleOperation(request.Operation)
+	if operation == "" {
+		return execute(request)
+	}
+	if request.LifecycleTimings == nil {
+		request.LifecycleTimings = make(map[string]int64)
+	}
+	timings := lifecycleTimings(request.LifecycleTimings)
+	end := timings.phase("total")
+	result, err := execute(request)
+	end()
+	observation := lifecycleObservation{Operation: operation, RequestID: request.RequestID(), ObservedAt: time.Now().UTC(), OK: err == nil, Timings: timings}
+	if protocol.ValidSandboxInstance(request.Instance()) && managed(request.Instance()) == nil {
+		if saveErr := save(lifecycleRoot(), 0, request.Instance(), observation); saveErr != nil {
+			fmt.Fprintf(log, "chasm executor: lifecycle timing persistence failed for %s: %v\n", request.Instance(), saveErr)
+		}
+	}
+	return result, err
+}
+
+func dispatch(request protocol.Request) (map[string]interface{}, error) {
+	timings := lifecycleTimings(request.LifecycleTimings)
 	switch request.Operation {
 	case "inspect_default_sandbox":
 		return inspectDefaultSandbox()
@@ -1377,7 +1458,7 @@ func Dispatch(request protocol.Request) (map[string]interface{}, error) {
 		if value, ok := request.NumberField("budget_cpu"); ok {
 			cpu = value
 		}
-		return createSandbox(request.Instance(), budget, cpu)
+		return createSandbox(request.Instance(), budget, cpu, timings)
 	case "describe_sandbox":
 		return describeSandbox(request.Instance())
 	case "set_sandbox_description":
@@ -1394,9 +1475,9 @@ func Dispatch(request protocol.Request) (map[string]interface{}, error) {
 	case "locate_repository":
 		return locateRepository(request.StringField("repository"))
 	case "ensure_guest_running":
-		return ensureSandboxRunning(request.Instance(), request.RequestID())
+		return ensureSandboxRunning(request.Instance(), request.RequestID(), timings)
 	case "stop_guest":
-		return stopSandbox(request.Instance())
+		return stopSandbox(request.Instance(), timings)
 	case "pause_guest":
 		return pauseSandbox(request.Instance())
 	case "resize_sandbox":

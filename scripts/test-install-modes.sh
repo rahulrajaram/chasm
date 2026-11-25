@@ -567,4 +567,129 @@ if [ "$GUARD_CALLER_UID" -ne 0 ]; then
     grep -q 'untrusted owner' "$WORK/guard.err" || die "ownership refusal was not explained"
 fi
 
+# --- 14. capability opt-in and release binary migration ---------------------
+# Execute the production helpers with a scratch payload and fixture tools.
+# No package manager, sudo, Incus, or systemd command participates.
+FUNCTIONS=$WORK/portability-functions.sh
+{
+    sed -n '/^check_host_distribution() {$/,/^}$/p' "$INSTALLER"
+    sed -n '/^selinux_enforcing() {$/,/^}$/p' "$INSTALLER"
+    sed -n '/^selinux_bin_label() {$/,/^}$/p' "$INSTALLER"
+    sed -n '/^go_install_path() {$/,/^}$/p' "$INSTALLER"
+    sed -n '/^check_service_executable() {$/,/^}$/p' "$INSTALLER"
+    sed -n '/^install_go_payload() {$/,/^}$/p' "$INSTALLER"
+    sed -n '/^site_kernel_hostname() {$/,/^}$/p' "$ROOT/scripts/lib/require-site-host.sh"
+} >"$FUNCTIONS"
+# shellcheck disable=SC1090
+. "$FUNCTIONS"
+p_ok() { printf 'ok %s\n' "$*"; }
+p_note() { printf 'note %s\n' "$*"; }
+p_fail() { printf 'fail %s\n' "$*"; }
+fail() { printf 'fail %s\n' "$*" >&2; exit 1; }
+
+OS_RELEASE=$WORK/os-release
+printf 'ID=fedora\nID_LIKE="rhel centos"\n' >"$OS_RELEASE"
+ALLOW_UNTESTED_HOST=0 CHASM_ALLOW_UNTESTED_HOST=0 check_host_distribution "$OS_RELEASE" |
+    grep -q '^fail .*--allow-untested-host' || die "unknown distro should require opt-in"
+ALLOW_UNTESTED_HOST=1 CHASM_ALLOW_UNTESTED_HOST=0 check_host_distribution "$OS_RELEASE" |
+    grep -q '^note WARNING:' || die "explicit flag must admit an untested distro with a warning"
+ALLOW_UNTESTED_HOST=0 CHASM_ALLOW_UNTESTED_HOST=1 check_host_distribution "$OS_RELEASE" |
+    grep -q '^note WARNING:' || die "explicit environment opt-in must warn"
+printf 'ID=ubuntu\nID_LIKE="debian linux"\n' >"$OS_RELEASE"
+ALLOW_UNTESTED_HOST=0 CHASM_ALLOW_UNTESTED_HOST=0 check_host_distribution "$OS_RELEASE" |
+    grep -q '^ok Debian-family host' || die "Debian derivative should pass the default gate"
+
+CAPABILITY_BIN=$WORK/capability-bin
+mkdir -p "$CAPABILITY_BIN"
+cat >"$CAPABILITY_BIN/uname" <<'EOF_UNAME'
+#!/bin/sh
+[ "$#" -eq 1 ] && [ "$1" = -n ] || exit 1
+echo unqualified-host
+EOF_UNAME
+chmod 0755 "$CAPABILITY_BIN/uname"
+[ "$(PATH="$CAPABILITY_BIN" site_kernel_hostname)" = unqualified-host ] ||
+    die "kernel hostname resolution must not need hostname executable"
+
+INSTALL_GO=$WORK/sbin
+INSTALL_OLD_GO=$WORK/lib/chasm/go
+INSTALL_INTERIM_GO=$WORK/libexec/chasm
+INSTALL_BIN=$WORK/bin
+BUILD_GO=$WORK/staged-go
+GO_BINARIES="chasm chasmctl executor_server supervisor_server"
+mkdir -p "$INSTALL_GO" "$INSTALL_OLD_GO" "$INSTALL_INTERIM_GO" "$INSTALL_BIN" "$BUILD_GO"
+for binary in $GO_BINARIES; do
+    printf 'old %s\n' "$binary" >"$INSTALL_OLD_GO/$binary"
+    printf 'interim %s\n' "$binary" >"$INSTALL_INTERIM_GO/$binary"
+    printf 'new %s\n' "$binary" >"$BUILD_GO/$binary"
+done
+ln -s "$INSTALL_INTERIM_GO/chasm" "$INSTALL_BIN/chasm"
+ln -s "$INSTALL_INTERIM_GO/chasmctl" "$INSTALL_BIN/chasmctl"
+# Stub privileged ownership flags while retaining ordinary copy/mode behavior.
+install() {
+    [ "$#" -eq 8 ] && [ "$1" = -o ] && [ "$3" = -g ] && [ "$5" = -m ] ||
+        die "unexpected install arguments: $*"
+    /usr/bin/install "$5" "$6" "$7" "$8"
+}
+verify_payload_links() {
+    for binary in $GO_BINARIES; do
+        installed_path=$(go_install_path "$binary")
+        [ "$(readlink "$INSTALL_OLD_GO/$binary")" = "$installed_path" ] ||
+            die "legacy $binary path did not migrate"
+        [ "$(readlink "$INSTALL_INTERIM_GO/$binary")" = "$installed_path" ] ||
+            die "interim $binary path did not migrate"
+        [ -x "$installed_path" ] && [ ! -L "$installed_path" ] || die "$binary did not install as a regular executable"
+    done
+}
+
+# Restrict command discovery to known tools to make SELinux absence deterministic.
+for tool in ln awk grep; do ln -s "$(command -v "$tool")" "$CAPABILITY_BIN/$tool"; done
+( PATH="$CAPABILITY_BIN"; ! selinux_enforcing && install_go_payload "$BUILD_GO" ) ||
+    die "migration failed with SELinux absent"
+verify_payload_links
+
+getenforce() { printf '%s\n' "$SELINUX_MODE"; }
+restorecon() {
+    [ "$1" = -F ] || die "unexpected restorecon arguments"
+    printf '%s\n' "$2" >>"$WORK/labels"
+}
+ls() {
+    if [ "$1" = -Z ]; then
+        printf 'system_u:object_r:%s:s0 %s\n' "$SELINUX_TYPE" "$2"
+    else
+        /usr/bin/ls "$@"
+    fi
+}
+SELINUX_MODE=Permissive
+SELINUX_TYPE=usr_t
+install_go_payload "$BUILD_GO"
+[ ! -e "$WORK/labels" ] || die "permissive SELinux unexpectedly required relabeling"
+verify_payload_links
+
+SELINUX_MODE=Enforcing
+rm "$INSTALL_OLD_GO/chasm" "$INSTALL_INTERIM_GO/chasm"
+printf 'old chasm\n' >"$INSTALL_OLD_GO/chasm"
+printf 'interim chasm\n' >"$INSTALL_INTERIM_GO/chasm"
+if (install_go_payload "$BUILD_GO") >"$WORK/selinux.out" 2>&1; then
+    die "enforcing SELinux accepted a drifted executable label"
+fi
+grep -q 'label is not bin_t' "$WORK/selinux.out" || die "label failure lacks a diagnostic"
+[ ! -L "$INSTALL_OLD_GO/chasm" ] && [ ! -L "$INSTALL_INTERIM_GO/chasm" ] ||
+    die "migration published links before all executable labels were verified"
+SELINUX_TYPE=bin_t
+install_go_payload "$BUILD_GO"
+verify_payload_links
+selinux_bin_label "$INSTALL_BIN/chasm" || die "known bin_t label did not verify"
+SELINUX_TYPE=usr_t
+if selinux_bin_label "$INSTALL_BIN/chasm"; then die "drifted label passed verification"; fi
+
+for server in executor supervisor; do
+    UNIT=$ROOT/host-control/chasm-$server.service.template
+    command_path=/usr/local/sbin/chasm-${server}-server
+    check_service_executable "$UNIT" "$command_path" || die "unit does not use migrated executable: $UNIT"
+    printf '# ExecStart=%s\nExecStart=/usr/local/lib/chasm/go/%s_server\n' "$command_path" "$server" >"$WORK/stale-unit"
+    if check_service_executable "$WORK/stale-unit" "$command_path"; then
+        die "stale unit passed executable path verification"
+    fi
+done
+
 echo "test-install-modes: ok (candidate modes reproduced; normalized tree clean; executables exact; reader accepts the installed profile; safe reinstall validated; symlinks refused; interrupted swaps roll back; stale elders retained across failed retries and cleaned by committed replacements; payload wiring pinned; root checkout guard verified)"

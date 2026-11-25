@@ -4,8 +4,10 @@ permalink: /install.html
 ---
 # Installing chasm
 
-These instructions provision a fresh Debian or Ubuntu (x86_64) host — tested
-on Debian 13, Ubuntu 26.04 and Ubuntu 24.04; Debian 12 is untested. The installer is
+These instructions provision a fresh x86_64 host. They are tested on Debian 13,
+Ubuntu 26.04, Ubuntu 24.04, Fedora 45 (SELinux enforcing) and Arch Linux;
+Debian 12 is untested. On hosts outside the Debian family, pass
+`--allow-untested-host` (see [Requirements recap](#requirements-recap)). The installer is
 `scripts/install-chasm.sh` in this repository; run it from a checkout.
 
 <pre><code class="language-sh"><span class="term-command">git</span> <span class="term-action">clone</span> <span class="term-url">https://github.com/rahulrajaram/chasm.git</span>
@@ -48,8 +50,11 @@ invocation therefore needs a root-owned checkout; when invoked through
 
 ## Requirements recap
 
-- Debian or Ubuntu on x86_64 (tested on Debian 13, Ubuntu 26.04 and
-  Ubuntu 24.04; Debian 12 is untested). On Ubuntu 24.04 the default
+- Linux on x86_64. Tested on Debian 13, Ubuntu 26.04, Ubuntu 24.04,
+  Fedora 45 (SELinux enforcing) and Arch Linux; Debian 12 is untested.
+  Upgrades are tested on Debian 13 only. Hosts outside the Debian family
+  need `--allow-untested-host`, and you install Incus, `incus-agent`,
+  `virtiofsd` and Go yourself. On Ubuntu 24.04 the default
   `golang-go` is 1.22, too old: install a versioned package such as
   `golang-1.23-go` or newer and put its `go` on root's `PATH`, and install
   `incus-agent` explicitly.
@@ -60,7 +65,8 @@ invocation therefore needs a root-owned checkout; when invoked through
   packagings ship the agent as a separate package that a minimal install can
   leave out; the template build then fails with
   `builder agent readiness timed out`. Install them yourself, or opt in
-  to the acquisition step with `--install-incus` during provisioning. That step
+  to the acquisition step with `--install-incus` during provisioning
+  (Debian 12 and 13 only). That step
   uses Debian's own repositories: the release's repositories on Debian
   13 (trixie) and newer, or `bookworm-backports` on Debian 12 (bookworm;
   refused when no `bookworm-backports` source is configured).
@@ -109,7 +115,7 @@ own sandboxes included — are unaffected.
 
 ```text
 install-chasm.sh [--help|--check|--provision|--verify] [--harden-ssh]
-                 [--install-incus]
+                 [--install-incus] [--allow-untested-host]
 ```
 
 - `--provision` — first-run installation. Every root step prompts for
@@ -133,6 +139,10 @@ install-chasm.sh [--help|--check|--provision|--verify] [--harden-ssh]
   usage error with any other mode. Requires the optional
   `plugins/install-incus` add-on; without the flag the installer installs
   no packages and requires incus and virtiofsd to be present already.
+- `--allow-untested-host` — explicitly bypass the non-Debian qualification
+  gate for provisioning. Capability checks still run, and this does not make
+  the distro supported. Equivalent environment opt-in: set
+  `CHASM_ALLOW_UNTESTED_HOST=1`.
 - `--help` — the full installer surface.
 
 `CHASM_SITE_CONF` selects an alternate descriptor path for read-only
@@ -153,18 +163,35 @@ all checks and read the skipped count in the summary.
 
 In order, one approval per step:
 
-1. **Preflight** (read-only): Debian family, systemd, nftables, `/dev/kvm`
+1. **Preflight** (read-only): Debian-family qualification gate (non-Debian
+   hosts require `--allow-untested-host` or `CHASM_ALLOW_UNTESTED_HOST=1`),
+   systemd, nftables, `/dev/kvm`
    with nesting off, disk headroom, storage pool growth plan, Docker
    coexistence detection (informational), sandbox bridge prefix collision,
    operator account, resolved through host NSS, Go toolchain, Incus and
-   virtiofsd presence. The installed supervisor unit permits only
+   virtiofsd and host `incus-agent` presence, and a Go toolchain at the
+   version required by `go.mod`. The installed supervisor unit permits only
    Unix-domain sockets. Network-backed NSS configurations therefore
    require a local Unix-socket resolver proxy (for example, SSSD or
    nslcd), with its socket accessible under the unit's other
    restrictions; direct network-socket NSS backends are unsupported.
    Preflight runs `getent` outside the unit and does not enforce this
    limit, so it may pass even when the supervisor later fails to resolve
-   the operator.
+   the operator. Capability checks on an untested distro do not make it
+   supported. Automatic Incus package installation remains Debian-only.
+   Incus socket discovery uses `INCUS_SOCKET`, then the root-owned
+   `/etc/chasm/incus-socket` setting, then `/var/lib/incus/unix.socket`,
+   then `/run/incus/unix.socket`. The socket and all parent directories must
+   be root-owned; parents may not be group- or world-writable. An explicit
+   override must name an existing local Unix socket. Set `INCUS_SOCKET`
+   during provisioning to persist that path in root-owned
+   `/etc/chasm/incus-socket` (mode 0600); Chasm services and the narrow shell
+   helper use this fixed setting without inheriting arbitrary caller
+   environment. A later `--provision` without an explicit override removes
+   the prior setting and selects a standard socket. With sudo `env_reset`, pass
+   overrides as `sudo INCUS_SOCKET=/path/to/socket install-chasm.sh --provision`
+   or `sudo CHASM_ALLOW_UNTESTED_HOST=1 install-chasm.sh --provision`;
+   variables set only in the invoking shell are dropped.
 2. **Incus install** (only with `--install-incus` and only if absent):
    `apt-get install incus virtiofsd` from the release's own repositories
    on Debian 13 (trixie) and newer; on Debian 12 (bookworm),
@@ -185,9 +212,12 @@ In order, one approval per step:
    `/etc/chasm/site-host-id` (root 0444). The installer pins it once and
    refuses a mismatch on later runs; runtime privileged entries verify the
    host against it.
-5. **Payload install**: builds the Go binaries and installs them under
-   `/usr/local/lib/chasm/go/`, symlinks `chasm` and
-   `chasmctl` into `/usr/local/bin/`, copies the provision tree (scripts,
+5. **Payload install**: builds the Go binaries and installs `chasm` and
+   `chasmctl` in `/usr/local/bin/` and the service executables in
+   `/usr/local/sbin/` (on SELinux enforcing hosts it runs `restorecon` and
+   verifies the `bin_t` labels). It keeps compatibility links in the older
+   `/usr/local/lib/chasm/go/` and `/usr/local/libexec/chasm/` directories,
+   then copies the provision tree (scripts,
    host and guest configuration) under
    `/usr/local/lib/chasm/provision/`, installs the core profile manifest
    into `/etc/chasm/profiles/` (only when absent; see
@@ -273,9 +303,9 @@ reservation: the file only grows as sandboxes actually use space.
 | ---- | ------ |
 | Users | One system user for the supervisor (`chasm-supervisor` by default, via the sysusers fragment), home under `/var/lib/chasm/supervisor`, no login shell |
 | Configuration | `/etc/chasm/site.conf` (the site descriptor) and the identity marker `/etc/chasm/site-host-id` |
-| Binaries | `/usr/local/lib/chasm/` (binaries, provision tree) and symlinks in `/usr/local/bin/` |
+| Binaries | `/usr/local/bin/chasm` and `chasmctl` (operator CLIs and sudo entry helper); `/usr/local/sbin/chasm-executor-server` and `chasm-supervisor-server` (system services); `/usr/local/lib/chasm/provision/` (provision tree); compatibility links under `/usr/local/lib/chasm/go/` and `/usr/local/libexec/chasm/` |
 | systemd units | `chasm-executor.service` + `.socket` (root), `chasm-supervisor.service` + `.socket` (unprivileged), `chasm-firewall.service` — all enabled |
-| sudo | `/etc/sudoers.d/chasm` — grants the operator exactly the internal `chasm __shell` entry helper used by `chasm shell` |
+| sudo | `/etc/sudoers.d/chasm` — grants the operator the narrow `chasm __shell`, `__exec`, and `__doctor` entries through `/usr/local/bin/chasm` |
 | Firewall | `/usr/local/sbin/chasm-firewall` and `/etc/chasm/firewall.nft.template`; manages the `inet chasm` nftables table and bridge-scoped `iptables` accepts in `INPUT`/`FORWARD` when available; Docker rules are not rewritten |
 | Incus | Storage pool (`storage_pool`, default `chasm`), NAT bridge (`bridge_name`, default `chasmbr0`), sandbox profile (`profile_name`, default `chasm`), base image alias (`base_image_alias`, default `chasm-debian-13`), and the sealed template instance. `resource_prefix` (default `chasm`) names the instance metadata keys `user.<prefix>.*`, the `<prefix>-shared` and `<prefix>-workspace-<instance>` volumes, and the `<prefix>-template-*` instances. Sandbox instances are always named `sandbox-<name>`. On first initialization the preseed also empties the Incus `default` profile and sets `images.auto_update_interval` to `0`. |
 | sshd | with `--harden-ssh` only: `/etc/ssh/sshd_config.d/00-chasm.conf` and `99-chasm.conf` (off by default) |

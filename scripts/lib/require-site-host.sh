@@ -159,7 +159,7 @@ site_require_descriptor() {
         esac
     done
 
-    [ -n "$SITE_SITE_NAME" ] || SITE_SITE_NAME=$(hostname)
+    [ -n "$SITE_SITE_NAME" ] || SITE_SITE_NAME=$(site_kernel_hostname)
     [ -n "$SITE_SITE_NAME" ] ||
         site_fail "site_name is absent and the hostname is unavailable" || return 1
     [ -n "$SITE_OPERATOR_USER" ] || SITE_OPERATOR_USER=${SUDO_USER:-${USER:-${LOGNAME:-}}}
@@ -374,9 +374,21 @@ site_nested_kvm_disabled() {
     esac
 }
 
+site_kernel_hostname() {
+    if hostname_value=$(uname -n 2>/dev/null) && [ -n "$hostname_value" ]; then
+        printf '%s\n' "$hostname_value"
+    elif [ -r /proc/sys/kernel/hostname ]; then
+        IFS= read -r hostname_value </proc/sys/kernel/hostname || true
+        [ -n "$hostname_value" ] || return 1
+        printf '%s\n' "$hostname_value"
+    else
+        return 1
+    fi
+}
+
 site_host_fingerprint() {
     {
-        printf 'hostname=%s\n' "$(hostname)"
+        printf 'hostname=%s\n' "$(site_kernel_hostname)"
         printf 'machine_id=%s\n' "$(cat /etc/machine-id)"
         printf 'root_uuid=%s\n' "$(findmnt -n -o UUID /)"
         printf 'product_name=%s\n' "$(cat /sys/class/dmi/id/product_name 2>/dev/null || true)"

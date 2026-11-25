@@ -81,7 +81,7 @@ own files to `/shared` or send them over the network.
 
 ### How the design contains privilege
 
-1. **A narrow, audited privileged path.** All privileged operations run
+1. **A narrow, audited lifecycle path.** Privileged lifecycle operations run
    in a root executor service behind a systemd-activated unix socket;
    the socket is owned by root, group-restricted to the supervisor
    service user, and mode 0660, and the executor rejects any connection
@@ -102,16 +102,26 @@ own files to `/shared` or send them over the network.
    generic error. A dispatched operation may already have taken effect.
    Inspect the current state before retrying a state-changing request.
 4. **The supervisor is unprivileged.** It runs as its own service user,
-   not root; only the executor runs as root. The operator-facing
+   separate from the root executor. The operator-facing
    supervisor socket is likewise root-owned, group-restricted, and mode
    0660. The executor service runs under systemd hardening
    (`ProtectSystem=strict`, `NoNewPrivileges`, `PrivateDevices`,
    `MemoryDenyWriteExecute`, a restricted syscall surface, and more).
-5. **Narrow sudoers scope.** The operator's sudo grant names only the
-   internal interactive shell-entry subcommand of `chasm`, and passes
-   an argument list to the root-owned entry helper. The helper requires
-   exactly one safe sandbox name, verifies the pinned site identity,
-   and takes the guest uid/gid from the site descriptor.
+5. **Narrow sudoers scope.** The shell entry receives one safe sandbox
+   name. The foreground exec entry accepts the exact `chasm __exec`
+   command and receives guest arguments over a bounded pipe protocol.
+   Both verify the operator and site identity and run as the configured
+   unprivileged guest UID/GID. Exec also validates target ownership and
+   requires the local Incus socket peer to be UID 0. The sudo grant disables
+   `NOPASSWD` and `NOSETENV` are supported by both sudo and sudo-rs. Classic
+   sudo may still apply `log_output` or `use_pty`; in that case its changed
+   stdio causes the exec helper to refuse the request before reading it
+   unless stdin and stdout are both FIFOs (`cmd/chasm/exec.go`,
+   `runPrivilegedExec`). Chasm's separate mode-0600
+   `/var/lib/chasm/executor/exec-audit.jsonl` records argv0, the argument
+   count and digest, cwd, environment key names, and execution status.
+   It excludes argument tails, environment values, and stream payloads.
+   Incus has its own operation metadata and logging behavior.
 6. **Guests are virtual machines behind a scoped bridge filter.** Each
    sandbox is an Incus virtual machine. A dedicated nftables table for
    the sandbox bridge accepts only IPv4 DHCP and DNS inbound from guests,

@@ -1,6 +1,6 @@
 # chasm
 
-chasm gives each untrusted workload its own virtual machine on a Debian
+chasm gives each untrusted workload its own virtual machine on a Linux
 host, holds it to a memory and CPU budget, and lets you throw the machine
 away when you are done. It is for Linux administrators and developers who
 want a repeatable, disposable place to run code, tools, or downloaded
@@ -37,8 +37,10 @@ to use it directly. Each sandbox gets:
 - Version 0.1.0. This is pre-1.0 software: commands and configuration may
   change without notice.
 - One maintainer.
-- x86_64 only. Tested on Debian 13 (trixie), Ubuntu 26.04 and Ubuntu
-  24.04; Debian 12 (bookworm) is untested.
+- x86_64 only. Tested on Debian 13 (trixie), Ubuntu 26.04, Ubuntu 24.04,
+  Fedora 45 (SELinux enforcing) and Arch Linux: fresh install, sandbox
+  lifecycle, `chasm exec` and persistence across stop/start. Upgrades are
+  tested on Debian 13 only. Debian 12 (bookworm) is untested.
 - This release installs no AI agents or model relay. The control plane
   (sandboxes, lifecycle, firewall) is the whole product;
   optional add-ons such as the clipboard bridge live under `plugins/`.
@@ -53,14 +55,14 @@ flowchart TD
     end
     subgraph priv["Root"]
         exe["chasm-executor.service"]
-        sh["chasm __shell<br/>(root-owned entry helper)"]
+        sh["chasm __shell / __exec<br/>(root-owned entry helpers)"]
     end
     op["Operator"] --> cli
     cli -->|"Unix socket, uid allowlist"| sup
     sup -->|"Unix socket, peer-credential gated"| exe
     exe -->|"fixed set of operations"| incus["Incus"]
-    cli -->|"sudo, one narrow grant"| sh
-    sh -->|"incus exec"| incus
+    cli -->|"sudo, narrow entry grants"| sh
+    sh -->|"local exec"| incus
     incus --> vm["Sandbox VM"]
 ```
 
@@ -69,20 +71,21 @@ commands go through the supervisor to a small root executor. The executor
 and the privileged helper scripts it runs are the path to Incus for those
 commands. After each request it dispatches, the executor appends an audit
 record; if that write fails, it reports the request as failed, although the
-operation may already have run. `chasm shell` is the one exception: it uses a
-single sudoers grant that names only the internal `chasm __shell` entry, which runs as
-root. That entry checks the invoking operator, the sandbox name, and the host
-identity, then opens a login shell in the VM as the site's guest UID and GID.
-chasm never grants general Incus or root access. See
-[docs/architecture.md](docs/architecture.md).
+operation may already have run. `chasm shell` and `chasm exec` are the
+exceptions: each uses one exact sudoers grant that names only its internal
+entry (`chasm __shell` or `chasm __exec`), which runs as root. The entry checks
+the invoking operator, the sandbox name, and the host identity, then runs the
+shell or command in the VM as the site's guest UID and GID. chasm never grants
+general Incus or root access. See [docs/architecture.md](docs/architecture.md).
 
 ## Requirements
 
-- Debian on x86_64.
+- Linux on x86_64. Provisioning outside the Debian family requires
+  `--allow-untested-host` or `CHASM_ALLOW_UNTESTED_HOST=1`.
 - `/dev/kvm`, with **nested virtualization disabled**. The installer
   refuses to continue otherwise; a fix ships in `host-config/modprobe.d/`.
 - systemd, nftables, and the `ip` command from `iproute2`.
-- Incus and `virtiofsd` already installed. The installer installs no
+- Incus, its host `incus-agent`, and `virtiofsd` already installed. The installer installs no
   packages unless you pass `--install-incus` with `--provision`, which
   installs both from Debian's own repositories. On Debian 12 that option
   needs the `bookworm-backports` apt source to be configured.
@@ -171,6 +174,7 @@ which has no sudo rights. For a full walkthrough, see
 | `chasm create NAME [BUDGET_MEMORY_MIB] [--memory MIB] [--cpu N]` | Create a sandbox from the sealed template, stopped |
 | `chasm start [NAME]` | Start a sandbox and wait for its guest agent |
 | `chasm shell [NAME]` | Open an interactive login shell inside a sandbox |
+| `chasm exec NAME -- COMMAND [ARG ...]` | Run a foreground command in a running sandbox |
 | `chasm show [NAME]` | Show sandbox details |
 | `chasm show NAME --layout` | Show a sandbox's observed filesystem |
 | `chasm describe NAME [--set TEXT \| --clear]` | Show, set, or clear a description |
@@ -209,6 +213,7 @@ issues for suspected vulnerabilities.
 - [Installing chasm](docs/install.md): requirements, provisioning,
   verification, and SSH hardening
 - [Your first sandbox](docs/first-sandbox.md)
+- [Drive a sandbox from an agent](docs/agent-workflow.md)
 - [Site configuration reference](docs/site-config.md)
 - [Command reference](docs/cli.md)
 - [Architecture](docs/architecture.md): components, trust boundaries,

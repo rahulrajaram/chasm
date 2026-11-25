@@ -405,7 +405,7 @@ builder_release_lifecycle_lock
 attempt=0
 while ! incus exec "$builder_name" -- true >/dev/null 2>&1; do
     attempt=$((attempt + 1))
-    [ "$attempt" -lt 90 ] || fail "builder agent readiness timed out"
+    [ "$attempt" -lt 90 ] || fail "builder Incus agent readiness timed out; verify the host incus-agent package or binary is installed"
     sleep 2
 done
 incus exec "$builder_name" -- cloud-init status --wait
