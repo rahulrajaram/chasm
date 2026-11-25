@@ -20,7 +20,7 @@ Use this setup for one sandbox on a fresh Debian 13 x86_64 site that meets the [
 
 1. From the trusted checkout, open `host-config/site.conf.example` in your editor **before the first provision**. Set the pool size and uncomment the guest disk setting. Leave the other settings at their defaults if the default network is available.
 
-   ```text
+   ```ini
    pool_size_gib=8
    profile_root_disk_gib=4
    ```
@@ -113,7 +113,7 @@ own sandboxes included — are unaffected.
 
 ## Installer modes
 
-```text
+```sh
 install-chasm.sh [--help|--check|--provision|--verify] [--harden-ssh]
                  [--install-incus] [--allow-untested-host]
 ```

@@ -12,7 +12,7 @@ help still works on a host whose descriptor is missing or invalid.
 
 ## `chasm`
 
-```
+```sh
 chasm
 chasm COMMAND [OPTIONS]
 chasm help [COMMAND]
@@ -293,7 +293,7 @@ preferred forms. `chasm help aliases` lists them.
 
 ## `chasmctl`
 
-```
+```sh
 chasmctl [--supervisor-socket PATH] COMMAND ...
 ```
 
@@ -310,7 +310,7 @@ descriptor is missing or invalid still gets working help.
 
 Supervisor commands:
 
-```
+```sh
 create-sandbox INSTANCE [BUDGET_MEMORY_MIB] [--cpu N]
 describe-sandbox INSTANCE
 set-sandbox-description INSTANCE DESCRIPTION
