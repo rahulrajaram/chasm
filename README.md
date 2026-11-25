@@ -36,13 +36,14 @@ to use it directly. Each sandbox gets:
 
 Chasm is pre-1.0 software from a single maintainer, and it has had no
 independent security audit. The installer runs as root and changes the
-host: KVM module options, the Incus configuration (including the `default`
-profile), nftables rules, systemd units and sudoers grants. It also requires nested virtualization to be turned off on the host. Install it on a
-dedicated machine or VM. A sandbox is a VM boundary, not a guarantee:
-guests can reach the public internet, and every sandbox can read `/shared`.
-Read [what a sandbox isolates](docs/architecture.md) before giving an agent
-anything you care about. Chasm is provided as is, without warranty, under
-the [MIT License](LICENSE).
+host: the Incus configuration (including the `default` profile), nftables
+rules, systemd units and sudoers grants. It also requires nested
+virtualization to be turned off on the host. Install it on a dedicated
+machine or VM. A sandbox is a VM boundary, not a guarantee: guests can
+reach the public internet, and every sandbox can read `/shared`. Read
+[what a sandbox isolates](docs/architecture.md#trust-boundaries) before
+giving an agent anything you care about. Chasm is provided as is, without
+warranty, under the [MIT License](LICENSE).
 
 ## Project status
 
