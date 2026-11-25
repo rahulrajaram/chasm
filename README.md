@@ -32,6 +32,18 @@ to use it directly. Each sandbox gets:
 - **A clean exit.** `chasm delete` removes a stopped sandbox's VM and its
   workspace volume, and proves each step before it reports success.
 
+## Use with care
+
+Chasm is pre-1.0 software from a single maintainer, and it has had no
+independent security audit. The installer runs as root and changes the
+host: KVM module options, the Incus configuration (including the `default`
+profile), nftables rules, systemd units and sudoers grants. It also requires nested virtualization to be turned off on the host. Install it on a
+dedicated machine or VM. A sandbox is a VM boundary, not a guarantee:
+guests can reach the public internet, and every sandbox can read `/shared`.
+Read [what a sandbox isolates](docs/architecture.md) before giving an agent
+anything you care about. Chasm is provided as is, without warranty, under
+the [MIT License](LICENSE).
+
 ## Project status
 
 - Version 0.1.0. This is pre-1.0 software: commands and configuration may
