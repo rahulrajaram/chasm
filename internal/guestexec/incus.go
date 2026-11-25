@@ -190,6 +190,12 @@ func validOperationPath(value, id string) bool {
 
 func (client *Client) wait(ctx context.Context, id string) Result {
 	reply, err := client.query(ctx, http.MethodGet, "/1.0/operations/"+id+"/wait", nil)
+	if err == nil && reply.Type == "error" {
+		// Incus 6.0.4 answers /wait for a failed operation (for example
+		// "Command not found" for exit 127) with a bare error envelope; the
+		// finished operation still carries its return value.
+		reply, err = client.query(ctx, http.MethodGet, "/1.0/operations/"+id, nil)
+	}
 	var op operation
 	if err != nil || reply.Type != "sync" || reply.StatusCode != 200 ||
 		json.Unmarshal(reply.Metadata, &op) != nil || op.ID != id || op.Metadata.Return == nil {

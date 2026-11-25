@@ -33,6 +33,7 @@ type fakeIncus struct {
 	signals          chan int
 	finish           chan struct{}
 	marker           bool
+	bareWaitError    bool
 	readbackError    bool
 	readbacks        chan execPost
 	deletedLogs      chan string
@@ -129,6 +130,19 @@ func (fake *fakeIncus) serve(conn net.Conn) {
 		writeTestJSON(conn, "200 OK", map[string]any{"type": "sync", "status_code": 200, "metadata": map[string]any{}})
 	case "/1.0/operations/" + testOperationID + "/wait":
 		<-fake.finish
+		status := 200
+		if fake.operationFailure != "" {
+			status = 400
+		}
+		if fake.bareWaitError && status != 200 {
+			writeTestJSON(conn, "200 OK", map[string]any{"type": "error", "error_code": 400, "error": fake.operationFailure, "metadata": nil})
+			return
+		}
+		writeTestJSON(conn, "200 OK", map[string]any{
+			"type": "sync", "status_code": 200,
+			"metadata": map[string]any{"id": testOperationID, "status_code": status, "err": fake.operationFailure, "metadata": map[string]any{"return": fake.exit}},
+		})
+	case "/1.0/operations/" + testOperationID:
 		status := 200
 		if fake.operationFailure != "" {
 			status = 400
@@ -249,55 +263,58 @@ func readClientFrame(reader io.Reader) (byte, []byte, error) {
 }
 
 func TestNativeExecSeparatesStreamsAndPreservesGuestStatus(t *testing.T) {
-	for _, value := range []int{0, 1, 124, 125, 126, 127, 129, 255} {
-		t.Run(fmt.Sprint(value), func(t *testing.T) {
-			fake := newFakeIncus(t)
-			fake.exit = value
-			if value == 126 {
-				fake.operationFailure = "Command not executable"
-			}
-			if value == 127 {
-				fake.operationFailure = "Command not found"
-			}
-			client := newClient(fake.dial)
-			input := make(chan []byte, 1)
-			input <- bytes.Repeat([]byte{0xff, 0}, 256)
-			close(input)
-			got := make(chan []byte, 1)
-			go func() { got <- <-fake.stdin; fake.terminate() }()
-			var stdout, stderr bytes.Buffer
-			request := Request{Argv: []string{"app", "", "x; y"}, Cwd: "/workspace", Environment: map[string]string{"KEY": "guest=value"}}
-			result := client.Execute(context.Background(), "sandbox-test", request, 3456, input, func(kind byte, payload []byte) error {
-				if kind == StdoutFrame {
-					_, _ = stdout.Write(payload)
-				} else {
-					_, _ = stderr.Write(payload)
+	for _, bare := range []bool{false, true} {
+		for _, value := range []int{0, 1, 124, 125, 126, 127, 129, 255} {
+			t.Run(fmt.Sprintf("%d/bare-wait-error=%t", value, bare), func(t *testing.T) {
+				fake := newFakeIncus(t)
+				fake.exit = value
+				fake.bareWaitError = bare
+				if value == 126 {
+					fake.operationFailure = "Command not executable"
 				}
-				return nil
+				if value == 127 {
+					fake.operationFailure = "Command not found"
+				}
+				client := newClient(fake.dial)
+				input := make(chan []byte, 1)
+				input <- bytes.Repeat([]byte{0xff, 0}, 256)
+				close(input)
+				got := make(chan []byte, 1)
+				go func() { got <- <-fake.stdin; fake.terminate() }()
+				var stdout, stderr bytes.Buffer
+				request := Request{Argv: []string{"app", "", "x; y"}, Cwd: "/workspace", Environment: map[string]string{"KEY": "guest=value"}}
+				result := client.Execute(context.Background(), "sandbox-test", request, 3456, input, func(kind byte, payload []byte) error {
+					if kind == StdoutFrame {
+						_, _ = stdout.Write(payload)
+					} else {
+						_, _ = stderr.Write(payload)
+					}
+					return nil
+				})
+				if value == 129 {
+					if result.GuestStatus != nil || result.IncusReturn == nil || *result.IncusReturn != 129 || result.ExitCode() != 124 {
+						t.Fatalf("ambiguous status: %+v", result)
+					}
+				} else if result.GuestStatus == nil || *result.GuestStatus != value || result.ExitCode() != value {
+					t.Fatalf("guest status expected %d, got %+v", value, result)
+				}
+				for _, expected := range []byte("abcd") {
+					if got := <-fake.opened; got != expected {
+						t.Fatalf("channel order %c != %c", got, expected)
+					}
+				}
+				post := <-fake.command
+				if post.User != 3456 || post.Group != 3456 || post.Interactive || !post.WaitForWS || post.Cwd != "/workspace" ||
+					len(post.Command) != 12 || post.Command[10] != "" || post.Command[11] != "x; y" || post.Environment["KEY"] != "guest=value" ||
+					post.Environment["HOME"] != "/home/agent" {
+					t.Fatalf("unexpected Incus request %+v", post)
+				}
+				if !bytes.Equal(<-got, bytes.Repeat([]byte{0xff, 0}, 256)) || !bytes.Equal(stdout.Bytes(), []byte{'a', 0, 'b'}) ||
+					!bytes.Equal(stderr.Bytes(), []byte{0xff, '!'}) {
+					t.Fatal("streams were changed or merged")
+				}
 			})
-			if value == 129 {
-				if result.GuestStatus != nil || result.IncusReturn == nil || *result.IncusReturn != 129 || result.ExitCode() != 124 {
-					t.Fatalf("ambiguous status: %+v", result)
-				}
-			} else if result.GuestStatus == nil || *result.GuestStatus != value || result.ExitCode() != value {
-				t.Fatalf("guest status expected %d, got %+v", value, result)
-			}
-			for _, expected := range []byte("abcd") {
-				if got := <-fake.opened; got != expected {
-					t.Fatalf("channel order %c != %c", got, expected)
-				}
-			}
-			post := <-fake.command
-			if post.User != 3456 || post.Group != 3456 || post.Interactive || !post.WaitForWS || post.Cwd != "/workspace" ||
-				len(post.Command) != 12 || post.Command[10] != "" || post.Command[11] != "x; y" || post.Environment["KEY"] != "guest=value" ||
-				post.Environment["HOME"] != "/home/agent" {
-				t.Fatalf("unexpected Incus request %+v", post)
-			}
-			if !bytes.Equal(<-got, bytes.Repeat([]byte{0xff, 0}, 256)) || !bytes.Equal(stdout.Bytes(), []byte{'a', 0, 'b'}) ||
-				!bytes.Equal(stderr.Bytes(), []byte{0xff, '!'}) {
-				t.Fatal("streams were changed or merged")
-			}
-		})
+		}
 	}
 }
 
