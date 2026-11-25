@@ -1,45 +1,23 @@
 ---
 layout: landing
 title: Long-horizon VMs for long-horizon agents
-description: Chasm gives each coding agent its own Linux VM on your own machine. Its disk, packages and workspace stay put between sessions, for as long as you keep it.
+description: Realize the true potential of fully sandboxed VMs with shared disk pools for truly long-horizon agentic orchestration on agentic OSes.
 ---
 <section class="hero">
   <h1>Long-horizon VMs for long-horizon agents</h1>
-  <p class="lede">Chasm gives each coding agent its own Linux VM on your own machine. Its disk, packages and workspace stay put between sessions. Leave it running for weeks, stop it and pick up later, or delete it when you’re done.</p>
-  <div class="hero__actions">
-    <a class="button" href="#install">Install Chasm</a>
-  </div>
-</section>
-<section class="section">
-  <ul class="features">
-    <li class="feature">
-      <h3>Stays put</h3>
-      <p>Installed packages, the root disk and <code>/workspace</code> survive stop and start. Nothing to rebuild each session.</p>
-    </li>
-    <li class="feature">
-      <h3>Its own kernel</h3>
-      <p>A real VM, not a container. The agent never shares your host’s kernel.</p>
-    </li>
-    <li class="feature">
-      <h3>On your hardware</h3>
-      <p>No cloud service or account. Sandboxes and their data stay on your host.</p>
-    </li>
-  </ul>
-  <p><a href="architecture.html">What a sandbox isolates, and what it doesn’t →</a></p>
+  <p class="lede">Realize the true potential of fully sandboxed VMs with shared disk pools for truly long-horizon agentic orchestration on agentic OSes.</p>
 </section>
 <section class="section" id="install">
   <h2>Install</h2>
-  <p>On Debian 13 (x86_64) with KVM (nested virtualization disabled) and Go 1.23 or newer on root’s <code>PATH</code>:</p>
 {% highlight bash %}
 git clone https://github.com/rahulrajaram/chasm.git
 cd chasm
 sudo scripts/install-chasm.sh --provision --install-incus
 sudo scripts/install-chasm.sh --verify
 {% endhighlight %}
-  <p>The default storage pool needs 74 GiB free. On a smaller disk, use the <a href="install.html#compact-install">compact install</a>. Ubuntu, Fedora and Arch are tested too, with their packages installed by hand. <a href="install.html#requirements-recap">Full requirements →</a></p>
 </section>
 <section class="section">
-  <h2>Run your agent</h2>
+  <h2>Run</h2>
 {% highlight bash %}
 # Create a VM and open a shell in it, then install and run your agent there
 chasm create demo
@@ -53,5 +31,4 @@ chasm exec demo -- uname -a
 chasm stop demo
 chasm delete demo
 {% endhighlight %}
-  <p><a href="first-sandbox.html">Your first sandbox, step by step →</a></p>
 </section>
