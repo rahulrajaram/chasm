@@ -108,4 +108,3 @@ Qualification must include repository-native Go and shell checks, installer veri
 1. Which supported Incus versions provide dependable termination after a disconnected local client and unambiguous guest completion evidence?
 2. Which enforcing SELinux policies supply the expected executable labels at the installed path?
 3. Which distro and release versions should enter the formal qualification matrix after the installer, upgrade, and runtime trials?
-
