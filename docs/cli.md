@@ -268,8 +268,13 @@ available fields including `request_id`, `code`, `guest_status`, `output_code`,
 `signal_sent`, and `timings_ms`. Dispositions are `completed`, `rejected`,
 `interrupted`, and `outcome_unknown`. A `signal_sent` value records the last
 signal written to the Incus control channel. It does not confirm which
-signal caused exit. Incus can synthesize return code 129 on VM disconnect.
-Chasm reports `outcome_unknown` and retains that code as `incus_return`.
+signal caused exit. Incus can synthesize return code 129 on VM disconnect,
+so a genuine guest exit 129 is confirmed separately: the command leaves a
+marker in the guest, and Chasm checks for it after Incus returns. With the
+marker, the result is `completed` with `guest_status` 129 and
+`confirmation: "status_marker"`. Without it, or if the check fails, Chasm
+reports `outcome_unknown` and retains the code as `incus_return` (CLI 124).
+`exec` and `shell` are refused until the sandbox finishes initializing.
 An `output_code` of `output_incomplete` means output could not be fully
 delivered. If the guest exited 0, the CLI exits 125 so truncated output is
 never reported as process success; `guest_status` still records 0. Other
