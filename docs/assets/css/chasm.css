@@ -613,3 +613,23 @@ blockquote.warning::before {
   pre * { color: var(--black) !important; }
   a { text-decoration-color: var(--black); }
 }
+
+/* ---------- Brush highlight ----------
+   An imperfect, hand-painted marker stroke in the brand yellow:
+   uneven edges, a slight tilt, and a faded start and end.
+   Usage: <mark class="brush">words</mark>                         */
+mark.brush {
+  color: inherit;
+  padding: 0.02em 0.28em 0.06em;
+  margin: 0 -0.12em;
+  border-radius: 0.9em 0.25em 0.8em 0.35em / 0.45em 0.7em 0.35em 0.6em;
+  background:
+    linear-gradient(104deg, rgb(250 204 21 / 0) 0.9%, rgb(250 204 21 / 0.95) 2.6%,
+      rgb(250 204 21 / 0.55) 6%, rgb(250 204 21 / 0.35) 90%, rgb(250 204 21 / 0.8) 96%,
+      rgb(250 204 21 / 0) 99%),
+    linear-gradient(183deg, rgb(250 204 21 / 0) 0%, rgb(250 204 21 / 0.4) 12%,
+      rgb(250 204 21 / 0) 30%, rgb(250 204 21 / 0.25) 78%, rgb(250 204 21 / 0) 95%);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+.hero h1 mark.brush { padding: 0 0.18em 0.04em; }
