@@ -22,6 +22,25 @@ Chasm is not an alternative to KVM or QEMU; it runs on them. KVM is the hypervis
 | Firecracker | A KVM microVM with a guest kernel and a deliberately small virtual device model. | Build a service that launches large numbers of lightweight VMs and supplies its own orchestration. | The service operator supplies guest images, networking, storage and the host controls around the VMM. [Firecracker architecture](https://firecracker-microvm.github.io/) |
 | Vagrant | A provider creates the environment. A VM provider and the Docker provider use different isolation mechanisms. | Describe a reproducible development environment and choose a provider for each host. | Review the provider, synced folders, forwarded ports and provisioners in the project configuration. [Vagrant providers](https://developer.hashicorp.com/vagrant/docs/providers) |
 | gVisor | An application kernel in userspace implements the Linux interfaces used by a sandboxed container. | Keep a container workflow while reducing the host system-call interface exposed to applications. | Check application compatibility and measure filesystem, networking and system-call-heavy paths for your workload. [gVisor architecture](https://gvisor.dev/docs/architecture_guide/intro/) · [Performance guide](https://gvisor.dev/docs/architecture_guide/performance/) |
+| Fly.io Sprites | A hosted, hardware-isolated microVM per Sprite, with a persistent ext4 disk that is backed up to object storage when idle. | You want a persistent agent machine without running hardware: it sleeps when idle, wakes on a request to its HTTPS URL, and takes quick filesystem checkpoints. | Fly operates the hosts and storage; you decide what code and credentials to place in the Sprite and who can reach its URL. |
+| Fly Machines | Hosted VMs started from a container image through a REST API, placed in the regions you choose. | Deploy and scale applications that start in well under a second, with Fly's networking and optional volumes. | Fly operates the platform; you own the image, its secrets, and the exposure of each service. |
+
+## Is Chasm a self-hosted Fly.io?
+
+No. Chasm overlaps with Sprites: both give an agent a persistent Linux VM
+that keeps its disk between sessions. It does not aim to replace Fly.io.
+Fly Machines is an application platform with fast launches from container
+images, a request-driven proxy, and placement across regions; Chasm runs
+named machines on one host you control and has none of those.
+
+Choose Chasm when the machine and its data must stay on your own hardware,
+when you want to inspect or change every layer down to Incus and QEMU, or
+when you don't want a hosted control plane. Choose Sprites or Fly Machines
+when you'd rather not run hosts, or need idle sleep with wake-on-request,
+public HTTPS URLs, quick checkpoints, or multiple regions. Chasm offers none
+of these today.
+
+Fly.io details are taken from its public documentation as of November 2026.
 
 ## How should I compare performance?
 
