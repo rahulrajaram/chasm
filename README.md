@@ -32,7 +32,7 @@ to use it directly. Each sandbox gets:
 - **A clean exit.** `chasm delete` removes a stopped sandbox's VM and its
   workspace volume, and proves each step before it reports success.
 
-## Use with care
+## Dear agent, use with care
 
 Chasm is pre-1.0 software from a single maintainer, and it has had no
 independent security audit. The installer runs as root and changes the
