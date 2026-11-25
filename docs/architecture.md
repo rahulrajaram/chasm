@@ -8,7 +8,7 @@ chasm is a host control plane: a small set of daemons, CLIs, and scripts
 that manage Incus virtual machines as sandboxes. This page describes the
 components, the trust boundaries between them, and the data flow of a
 typical command. The security consequences are drawn out in
-[SECURITY.md](https://github.com/rahulrajaram/chasm/blob/main/SECURITY.md).
+[SECURITY.md](https://github.com/rahulrajaram/chasm/blob/master/SECURITY.md).
 
 ## Components
 
@@ -140,7 +140,7 @@ helper never run privileged.
 The control plane prefers refusing to guessing: unknown descriptor keys
 are fatal on both readers, budget sums that exceed headroom refuse
 starts, and a firewall stop that cannot prove its rules gone fails rather
-than leaving the bridge open. See [SECURITY.md](https://github.com/rahulrajaram/chasm/blob/main/SECURITY.md) for
+than leaving the bridge open. See [SECURITY.md](https://github.com/rahulrajaram/chasm/blob/master/SECURITY.md) for
 the full threat model, and [idioms.md](idioms.md) for the rules on
 resources: one truth per resource, drift shown rather than hidden, a
 supported path for every change, and limits the host can back.

@@ -7,7 +7,7 @@ lang: en
 url: "https://rahulrajaram.github.io"
 baseurl: "/chasm"
 github_url: "https://github.com/rahulrajaram/chasm"
-edit_branch: main
+edit_branch: master
 
 permalink: none
 

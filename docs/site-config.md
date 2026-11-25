@@ -5,7 +5,7 @@ permalink: /site-config.html
 # Site configuration
 
 `/etc/chasm/site.conf` configures one Chasm installation. The installer
-copies [the example](https://github.com/rahulrajaram/chasm/blob/main/host-config/site.conf.example) on first provision
+copies [the example](https://github.com/rahulrajaram/chasm/blob/master/host-config/site.conf.example) on first provision
 and resolves the site name and operator. Later provisioning runs use the
 installed descriptor. Changes to the descriptor alone cannot migrate Incus
 objects or change already-rendered systemd and firewall configuration.

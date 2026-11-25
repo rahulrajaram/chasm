@@ -75,7 +75,7 @@ A re-run keeps the installed site descriptor at `/etc/chasm/site.conf` instead
 of copying the example again; it only rewrites the `site_name` and
 `operator_user` lines with their resolved values. When a release changes the
 descriptor schema (reported in the
-[changelog](https://github.com/rahulrajaram/chasm/blob/main/CHANGELOG.md)), edit the file by hand — both readers fail
+[changelog](https://github.com/rahulrajaram/chasm/blob/master/CHANGELOG.md)), edit the file by hand — both readers fail
 closed on unknown keys, so stale keys must be removed for the site to
 come up.
 
