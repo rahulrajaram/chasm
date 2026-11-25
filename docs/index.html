@@ -7,16 +7,6 @@ description: Fully sandboxed VMs, shared disk pools. Truly long-horizon agentic 
   <h1>Long-horizon VMs for long-horizon agents</h1>
   <p class="lede">Fully sandboxed VMs, shared disk pools. Truly long-horizon agentic orchestration on agentic OSes.</p>
 </section>
-<section class="section" id="use-cases">
-  <h2>What you can do with it</h2>
-  <ul>
-    <li><strong>Run</strong> coding agents <strong>for weeks</strong></li>
-    <li><strong>Isolate</strong> agent execution <strong>within VM sandboxes</strong></li>
-    <li><strong>Orchestrate agent swarms</strong></li>
-    <li>Control the sandbox <strong>lifecycle</strong></li>
-    <li><strong>Run Docker</strong> inside a sandbox, or <strong>run Chasm inside a VM</strong> (<a href="nesting.html">how</a>)</li>
-  </ul>
-</section>
 <section class="section" id="install">
   <h2>Install</h2>
 {% highlight bash %}
@@ -25,6 +15,16 @@ cd chasm
 sudo scripts/install-chasm.sh --provision --install-incus
 sudo scripts/install-chasm.sh --verify
 {% endhighlight %}
+</section>
+<section class="section" id="use-cases">
+  <h2>What you can do with it</h2>
+  <ul>
+    <li><strong>Run</strong> coding agents <strong>for weeks</strong></li>
+    <li><strong>Isolate</strong> agent execution <strong>within VM sandboxes</strong></li>
+    <li><strong>Orchestrate agent swarms</strong></li>
+    <li>Control the sandbox <strong>lifecycle</strong></li>
+    <li><strong>Run Docker containers</strong> inside <strong>VM sandboxes</strong> (<a href="nesting.html#run-docker-inside-a-chasm-sandbox">how</a>)</li>
+  </ul>
 </section>
 <section class="section">
   <h2>Run</h2>
