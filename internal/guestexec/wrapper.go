@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 )
 
 // Bash job control gives the command its own process group without the
@@ -63,16 +64,30 @@ func (client *Client) wrappedArgv(token string, argv []string) []string {
 
 // Readback has no websocket streams and one deadline for dispatch and wait.
 // Its argv contains only a fixed script and our random token, never user data.
+// Incus 6.0 VMs only run a stream-less exec with record-output, so the
+// (empty) recorded logs are deleted afterwards on a best-effort basis.
 func (client *Client) confirmMarker(name, token string, uid int) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), operationTimeout)
 	defer cancel()
-	post := execPost{Command: []string{"/bin/bash", "--noprofile", "--norc", "-p", "-c", markerReadback, "chasm-status", token}, User: uid, Group: uid, Cwd: "/"}
+	post := execPost{Command: []string{"/bin/bash", "--noprofile", "--norc", "-p", "-c", markerReadback, "chasm-status", token},
+		User: uid, Group: uid, Cwd: "/", RecordOutput: true}
 	reply, err := client.query(ctx, http.MethodPost, "/1.0/instances/"+name+"/exec", post)
 	var op operation
 	if err != nil || reply.Type != "async" || reply.StatusCode != 100 || json.Unmarshal(reply.Metadata, &op) != nil ||
 		!operationID.MatchString(op.ID) || !validOperationPath(reply.Operation, op.ID) {
 		return false
 	}
-	result := client.wait(ctx, op.ID)
-	return result.GuestStatus != nil && *result.GuestStatus == 0
+	id := op.ID
+	reply, err = client.query(ctx, http.MethodGet, "/1.0/operations/"+id+"/wait", nil)
+	op = operation{}
+	if err != nil || reply.Type != "sync" || reply.StatusCode != 200 || json.Unmarshal(reply.Metadata, &op) != nil || op.ID != id {
+		return false
+	}
+	logs := regexp.MustCompile(`^/1\.0/instances/` + regexp.QuoteMeta(name) + `/logs/exec-output/exec_[0-9a-f-]{36}\.std(out|err)$`)
+	for _, path := range op.Metadata.Output {
+		if logs.MatchString(path) {
+			_, _ = client.query(ctx, http.MethodDelete, path, nil)
+		}
+	}
+	return op.StatusCode == 200 && op.Error == "" && op.Metadata.Return != nil && *op.Metadata.Return == 0
 }

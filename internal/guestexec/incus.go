@@ -74,6 +74,7 @@ type operation struct {
 	Error      string `json:"err"`
 	Metadata   struct {
 		FDs    map[string]string `json:"fds"`
+		Output map[string]string `json:"output"`
 		Return *int              `json:"return"`
 	} `json:"metadata"`
 }
@@ -148,6 +149,9 @@ type execPost struct {
 	User        int               `json:"user"`
 	Group       int               `json:"group"`
 	Cwd         string            `json:"cwd"`
+	// RecordOutput lets a stream-less exec run: Incus 6.0 VMs return -1
+	// without running the command when neither websockets nor recording is set.
+	RecordOutput bool `json:"record-output,omitempty"`
 }
 
 var operationID = regexp.MustCompile(`^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`)

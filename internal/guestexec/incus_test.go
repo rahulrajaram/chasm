@@ -35,6 +35,7 @@ type fakeIncus struct {
 	marker           bool
 	readbackError    bool
 	readbacks        chan execPost
+	deletedLogs      chan string
 	exit             int
 	operationFailure string
 	dropOutput       bool
@@ -44,7 +45,7 @@ type fakeIncus struct {
 
 func newFakeIncus(t *testing.T) *fakeIncus {
 	return &fakeIncus{
-		t: t, readbacks: make(chan execPost, 2), command: make(chan execPost, 1), stdin: make(chan []byte, 1), opened: make(chan byte, 4),
+		t: t, readbacks: make(chan execPost, 2), deletedLogs: make(chan string, 4), command: make(chan execPost, 1), stdin: make(chan []byte, 1), opened: make(chan byte, 4),
 		handshakes: make(chan struct{}, 4), dropRelease: make(chan struct{}),
 		signals: make(chan int, 3), finish: make(chan struct{}),
 	}
@@ -117,7 +118,15 @@ func (fake *fakeIncus) serve(conn net.Conn) {
 		if fake.marker {
 			status = 0
 		}
-		writeTestJSON(conn, "200 OK", map[string]any{"type": "sync", "status_code": 200, "metadata": map[string]any{"id": markerOperationID, "status_code": 200, "metadata": map[string]any{"return": status}}})
+		writeTestJSON(conn, "200 OK", map[string]any{"type": "sync", "status_code": 200, "metadata": map[string]any{"id": markerOperationID, "status_code": 200, "metadata": map[string]any{"return": status, "output": map[string]any{
+			"1": "/1.0/instances/sandbox-test/logs/exec-output/exec_" + markerOperationID + ".stdout",
+			"2": "/etc/passwd"}}}})
+	case "/1.0/instances/sandbox-test/logs/exec-output/exec_" + markerOperationID + ".stdout":
+		if request.Method != http.MethodDelete {
+			fake.t.Errorf("unexpected log method %s", request.Method)
+		}
+		fake.deletedLogs <- request.URL.Path
+		writeTestJSON(conn, "200 OK", map[string]any{"type": "sync", "status_code": 200, "metadata": map[string]any{}})
 	case "/1.0/operations/" + testOperationID + "/wait":
 		<-fake.finish
 		status := 200
@@ -405,9 +414,19 @@ func TestStatusMarkerConfirmation(t *testing.T) {
 				if tc.exit != 129 {
 					t.Fatal("unnecessary readback")
 				}
-				if readback.User != post.User || readback.Group != post.Group || readback.Cwd != "/" || readback.WaitForWS ||
+				if readback.User != post.User || readback.Group != post.Group || readback.Cwd != "/" || readback.WaitForWS || !readback.RecordOutput ||
 					len(readback.Command) != 8 || readback.Command[5] != markerReadback || readback.Command[7] != post.Command[7] {
 					t.Fatalf("unsafe readback: %+v", readback)
+				}
+				if !tc.failure {
+					select {
+					case path := <-fake.deletedLogs:
+						if path != "/1.0/instances/sandbox-test/logs/exec-output/exec_"+markerOperationID+".stdout" {
+							t.Fatalf("deleted %s", path)
+						}
+					default:
+						t.Fatal("recorded readback log not deleted")
+					}
 				}
 			default:
 				if tc.exit == 129 {
