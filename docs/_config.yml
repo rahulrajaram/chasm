@@ -6,7 +6,10 @@ logo: /assets/logo-512.png
 
 # Link previews (Open Graph / Twitter cards) for every page.
 twitter:
+  username: rahulrajaramio
   card: summary_large_image
+author:
+  twitter: rahulrajaramio
 
 # Project site served at https://rahulrajaram.github.io/chasm/
 url: "https://rahulrajaram.github.io"
